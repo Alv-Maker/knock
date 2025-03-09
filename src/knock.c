@@ -35,7 +35,7 @@
 #include <getopt.h>
 #include <fcntl.h>
 
-static char version[] = "0.8";
+static char version[] = "0.1";
 
 #define PROTO_TCP 1
 #define PROTO_UDP 2
@@ -181,6 +181,7 @@ void vprint(char *fmt, ...)
 }
 
 void usage() {
+	printf("Secured version of knock. Author: Alberto Nóvoa González. Topic: Degree-end work");
 	printf("usage: knock [options] <host> <port[:proto]> [port[:proto]] ...\n");
 	printf("options:\n");
 	printf("  -u, --udp            make all ports hits use UDP (default is TCP)\n");
@@ -197,8 +198,11 @@ void usage() {
 }
 
 void ver() {
-	printf("knock %s\n", version);
+	printf("sknock %s\n", version);
 	printf("Copyright (C) 2004-2012 Judd Vinet <jvinet@zeroflux.org>\n");
+	printf("Modifications from knock to sknock: \n");
+	printf("Copyright (C) Alberto Novoa Gonzalez <angonzalez22@esei.uvigo.es>\n");
+
 	exit(0);
 }
 

@@ -63,7 +63,7 @@
 extern int daemon(int, int);
 #endif
 
-static char version[] = "0.8";
+static char version[] = "0.1";
 
 #define SEQ_TIMEOUT 25 /* default knock timeout in seconds */
 #define CMD_TIMEOUT 10 /* default timeout in seconds between start and stop commands */
@@ -518,8 +518,12 @@ void usage(int exit_code) {
 }
 
 void ver() {
-	printf("knockd %s\n", version);
+	printf("sknockd %s\n", version);
+	printf("Original knock code: \n");
 	printf("Copyright (C) 2004-2012 Judd Vinet <jvinet@zeroflux.org>\n");
+	printf("Modifications from knockd to sknockd: \n");
+	printf("Copyright (C) Alberto Novoa Gonzalez <angonzalez22@esei.uvigo.es>\n");
+
 	exit(0);
 }
 
