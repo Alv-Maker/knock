@@ -1607,6 +1607,10 @@ void process_attempt(knocker_t *attempt)
 			attempt->door->pcap_filter_exp = NULL;
 			generate_pcap_filter();
 		}
+		else{
+			unsigned short[] seq = generate_new_sequence();
+			register_new_sequence(start_command, seq);
+		}
 	}
 }
 
@@ -1899,3 +1903,53 @@ int target_strcmp(char *ip, char *target) {
 }
 
 /* vim: set ts=2 sw=2 noet: */
+
+void register_new_sequence(char* command, unsigned short[] sequence){
+	const char *filename = SHA1(command);
+    const char *content;
+
+	// Converting the sequence to a string
+	for (int i = 0; i < sizeof(sequence) / sizeof(sequence[0]); i++) {
+		char buffer[6]; // Enough space for 5 digits and null terminator
+		sprintf(buffer, "%hu", sequence[i]);
+		if (i == 0) {
+			content = buffer; // First element, no comma needed
+		} else {
+			content = realloc(content, strlen(content) + strlen(buffer) + 2); // +2 for comma and null terminator
+			strcat(content, ",");
+			strcat(content, buffer);
+		}
+	}
+    // Open the file for writing, create it if it doesn't exist
+    FILE *file = fopen(filename, "w");
+    if (file == NULL) {
+        perror("Error opening the sequence file");
+        exit(1);
+    }
+
+    // Write content to the file
+    if (fprintf(file, "%s", content) < 0) {
+        perror("Error writing data to the sequence file");
+        fclose(file);
+        exit(1);
+    }
+
+    logprint("SUCCESFUL: File written successfully.\n");
+
+    // Close the file
+    fclose(file);
+}
+
+unsigned short[] generate_new_sequence(){
+	//We are going to generate a random name between 4 and 16 for the sequence size
+	int size = rand() % 12 + 4;
+	unsigned short *sequence = malloc(size * sizeof(unsigned short));
+	if(sequence == NULL) {
+		perror("malloc");
+		cleanup(1);
+	}
+	for(int i = 0; i < size; i++){
+		sequence[i] = rand() % 65535 + 1; //TODO: use a strongest random function
+	}
+	
+}
