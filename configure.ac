@@ -15,6 +15,12 @@ AS_IF([test "x$enable_knockd" != "xno"], [
     [AC_MSG_ERROR([you need the libpcap library to build knockd])])
 ])
 
+AC_CHECK_LIB([ssl], [OPENSSL_init_ssl], ,
+  [AC_MSG_ERROR([you need the OpenSSL library to build this program])])
+
+AC_CHECK_LIB([crypto], [CRYPTO_malloc], ,
+  [AC_MSG_ERROR([you need the OpenSSL crypto library to build this program])])
+
 AM_CONDITIONAL([BUILD_KNOCKD], [test "x$enable_knockd" != "xno"])
 
 AC_CONFIG_FILES([Makefile])

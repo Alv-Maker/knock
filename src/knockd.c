@@ -57,6 +57,7 @@
 #include <pcap.h>
 #include <errno.h>
 #include "list.h"
+#include <openssl/sha.h>
 
 #if __APPLE__
 #undef daemon
@@ -141,6 +142,8 @@ size_t parse_cmd(char *dest, size_t size, const char *command, const char *src);
 int exec_cmd(char *command, char *name);
 void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet);
 int target_strcmp(char *ip, char *target);
+
+unsigned short* generate_new_sequence();
 
 pcap_t *cap = NULL;
 FILE *logfd = NULL;
@@ -1608,7 +1611,7 @@ void process_attempt(knocker_t *attempt)
 			generate_pcap_filter();
 		}
 		else{
-			unsigned short[] seq = generate_new_sequence();
+			unsigned short *seq = generate_new_sequence();
 			register_new_sequence(start_command, seq);
 		}
 	}
@@ -1904,22 +1907,30 @@ int target_strcmp(char *ip, char *target) {
 
 /* vim: set ts=2 sw=2 noet: */
 
-void register_new_sequence(char* command, unsigned short[] sequence){
-	const char *filename = SHA1(command);
+void register_new_sequence(char* command, unsigned short* sequence){
+	printf("Registering new sequence...\n");
+	
+	const char *filename = (char*)malloc(64*sizeof(char)); // 64 bytes for the filename
+	const char* hash[64]; // SHA1 hash length
+	SHA1(command, strlen(command), hash); // Generate a unique filename based on the command
+	sprintf(filename, "%x", hash); // Convert the long integer back to a string
+	printf("Filename: %s\n", filename);
     const char *content;
 
 	// Converting the sequence to a string
 	for (int i = 0; i < sizeof(sequence) / sizeof(sequence[0]); i++) {
-		char buffer[6]; // Enough space for 5 digits and null terminator
+		char* buffer = (char*)malloc(6*sizeof(char)); // 5 digits + null terminator
 		sprintf(buffer, "%hu", sequence[i]);
 		if (i == 0) {
 			content = buffer; // First element, no comma needed
 		} else {
-			content = realloc(content, strlen(content) + strlen(buffer) + 2); // +2 for comma and null terminator
+			realloc(content, strlen(content) + strlen(buffer) + 2); // +2 for comma and null terminator
 			strcat(content, ",");
 			strcat(content, buffer);
 		}
+		printf("In for loop!\n");
 	}
+	printf("Here we are!\n");
     // Open the file for writing, create it if it doesn't exist
     FILE *file = fopen(filename, "w");
     if (file == NULL) {
@@ -1938,10 +1949,13 @@ void register_new_sequence(char* command, unsigned short[] sequence){
 
     // Close the file
     fclose(file);
+
+	printf("Registered new sequence!\n");
 }
 
-unsigned short[] generate_new_sequence(){
+unsigned short* generate_new_sequence(){
 	//We are going to generate a random name between 4 and 16 for the sequence size
+	printf("Generating new sequence...\n");
 	int size = rand() % 12 + 4;
 	unsigned short *sequence = malloc(size * sizeof(unsigned short));
 	if(sequence == NULL) {
@@ -1951,5 +1965,8 @@ unsigned short[] generate_new_sequence(){
 	for(int i = 0; i < size; i++){
 		sequence[i] = rand() % 65535 + 1; //TODO: use a strongest random function
 	}
+	printf("Generated sequence!\n");
+	return sequence;
+
 	
 }
