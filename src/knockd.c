@@ -26,6 +26,11 @@
 #define daemon deprecated_in_osx_10_5_and_up
 #endif
 
+#define MQTT_PORT 1883
+#define MQTT_open_comand "/usr/sbin/iptables -A INPUT -s %IP% -p tcp --dport 1883 -j ACCEPT"
+#define MQTT_close_comand "/usr/sbin/iptables -A INPUT -s %IP% -p tcp --dport 1883 -j ACCEPT"
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -58,6 +63,7 @@
 #include <errno.h>
 #include "list.h"
 #include <openssl/sha.h>
+#include <MQTTClient.h>
 
 #if __APPLE__
 #undef daemon
@@ -143,6 +149,7 @@ int exec_cmd(char *command, char *name);
 void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet);
 int target_strcmp(char *ip, char *target);
 
+void register_new_sequence(const unsigned char* command, unsigned short* sequence);
 unsigned short* generate_new_sequence();
 
 pcap_t *cap = NULL;
@@ -1907,15 +1914,20 @@ int target_strcmp(char *ip, char *target) {
 
 /* vim: set ts=2 sw=2 noet: */
 
-void register_new_sequence(char* command, unsigned short* sequence){
+void register_new_sequence(const unsigned char* command, unsigned short* sequence){
 	printf("Registering new sequence...\n");
 	
-	const char *filename = (char*)malloc(64*sizeof(char)); // 64 bytes for the filename
-	const char* hash[64]; // SHA1 hash length
+	unsigned char filename[SHA_DIGEST_LENGTH * 2 + 1]; // 64 bytes for the filename
+	unsigned char hash[SHA_DIGEST_LENGTH]; // SHA1 hash length
 	SHA1(command, strlen(command), hash); // Generate a unique filename based on the command
-	sprintf(filename, "%x", hash); // Convert the long integer back to a string
+	for (int i = 0; i < SHA_DIGEST_LENGTH * 2; i+=2)
+	{
+		sprintf((filename + i), "%02x", hash[i]);
+	}
+	filename[SHA_DIGEST_LENGTH * 2] = '\0';
+	 // Convert the long integer back to a string
 	printf("Filename: %s\n", filename);
-    const char *content;
+    char *content;
 
 	// Converting the sequence to a string
 	for (int i = 0; i < sizeof(sequence) / sizeof(sequence[0]); i++) {
@@ -1924,7 +1936,7 @@ void register_new_sequence(char* command, unsigned short* sequence){
 		if (i == 0) {
 			content = buffer; // First element, no comma needed
 		} else {
-			realloc(content, strlen(content) + strlen(buffer) + 2); // +2 for comma and null terminator
+			content = realloc(content, strlen(content) + strlen(buffer) + 2); // +2 for comma and null terminator
 			strcat(content, ",");
 			strcat(content, buffer);
 		}
