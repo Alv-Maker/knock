@@ -34,9 +34,10 @@
 #include <resolv.h>
 #include <getopt.h>
 #include <fcntl.h>
+#include <MQTTClient.h>
 
 
-static char version[] = "0.1";
+static char version[] = "0.9";
 
 #define PROTO_TCP 1
 #define PROTO_UDP 2
@@ -49,6 +50,7 @@ static char version[] = "0.1";
 void vprint(char *fmt, ...);
 void ver();
 void usage();
+char* get_new_sequence();
 
 int o_verbose = 0;
 int o_udp     = 0;
@@ -167,6 +169,13 @@ int main(int argc, char** argv)
 		freeaddrinfo(infoptr);
 	}
 
+	char *seq = get_new_sequence();
+	if(seq == NULL) {
+		fprintf(stderr, "Failed to get new sequence\n");
+		exit(1);
+	}
+	printf("New sequence: %s\n", seq);
+
 	return(0);
 }
 
@@ -199,12 +208,33 @@ void usage() {
 }
 
 void ver() {
-	printf("sknock %s\n", version);
+	printf("knock %s\n", version);
+	printf("Version 0.8 code:\n");
 	printf("Copyright (C) 2004-2012 Judd Vinet <jvinet@zeroflux.org>\n");
-	printf("Modifications from knock to sknock: \n");
+	printf("Next versions: \n");
 	printf("Copyright (C) Alberto Novoa Gonzalez <angonzalez22@esei.uvigo.es>\n");
 
 	exit(0);
+}
+
+char* get_new_sequence(){
+	MQTTClient client;
+	//sleep(2);
+	int rc = MQTTClient_create(&client, "tcp://localhost:1883", "Knock-client", MQTTCLIENT_PERSISTENCE_NONE, NULL);
+	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+	
+	MQTTClient_connect(client, &conn_opts);
+	MQTTClient_subscribe(client, "seq/new", 0);
+	MQTTClient_message* msg;
+	char *topic = NULL;
+	int topic_len = 0;
+	printf("Waiting for new sequence...\n");
+	
+	rc = MQTTClient_receive(client, &topic, &topic_len, &msg, 5000);
+	printf("Error code: %d\n", rc);
+	printf("Received new sequence: %s\n", msg->payload);
+	printf("Please take note of the sequence and don't share it with anyone.\n");
+	MQTTClient_freeMessage(&msg);
 }
 
 /* vim: set ts=2 sw=2 noet: */

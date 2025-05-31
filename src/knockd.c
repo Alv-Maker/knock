@@ -70,7 +70,7 @@
 extern int daemon(int, int);
 #endif
 
-static char version[] = "0.1";
+static char version[] = "0.9";
 
 #define SEQ_TIMEOUT 25 /* default knock timeout in seconds */
 #define CMD_TIMEOUT 10 /* default timeout in seconds between start and stop commands */
@@ -105,7 +105,18 @@ typedef struct opendoor {
 	char *pcap_filter_exp;
 	char *pcap_filter_expv6;
 } opendoor_t;
+
+/* New MQTT tuples. opendoor_t now is MQTT data*/
+
+typedef struct {
+	unsigned short sequence[SEQ_MAX];
+	unsigned char anchorTopic[8];
+	unsigned char sailerTopic[8];
+	unsigned char dataSequence[SEQ_MAX];
+} credential;
+
 PMList *doors = NULL;
+PMList *credentials = NULL;
 
 /* we keep one list of knock attempts per IP address,
  * and increment the stage as they progress through the sequence.
@@ -353,6 +364,8 @@ int main(int argc, char **argv)
 	dprint("bailed out of main loop! (ret=%d)\n", ret);
 	pcap_perror(cap, "pcap");
 
+
+
 	cleanup(0);
 	/* notreached */
 	exit(0);
@@ -528,10 +541,10 @@ void usage(int exit_code) {
 }
 
 void ver() {
-	printf("sknockd %s\n", version);
-	printf("Original knock code: \n");
+	printf("knockd %s\n", version);
+	printf("Version 0.8 code: \n");
 	printf("Copyright (C) 2004-2012 Judd Vinet <jvinet@zeroflux.org>\n");
-	printf("Modifications from knockd to sknockd: \n");
+	printf("Next versions: \n");
 	printf("Copyright (C) Alberto Novoa Gonzalez <angonzalez22@esei.uvigo.es>\n");
 
 	exit(0);
@@ -1317,6 +1330,14 @@ void close_door(opendoor_t *door)
 	free_door(door);
 }
 
+void unvalidate_credentials(credential *cred)
+{
+	credentials = list_remove(credentials, cred);
+	free(cred->anchorTopic);
+	free(cred->sailerTopic);
+	free(cred->sequence);
+}
+
 /* Get the IP address of an interface
  */
 char* get_ip(const char* iface, char *buf, int bufsize)
@@ -1620,6 +1641,7 @@ void process_attempt(knocker_t *attempt)
 		else{
 			unsigned short *seq = generate_new_sequence();
 			register_new_sequence(start_command, seq);
+			send_sequence(seq, "seq/new");
 		}
 	}
 }
@@ -1940,9 +1962,7 @@ void register_new_sequence(const unsigned char* command, unsigned short* sequenc
 			strcat(content, ",");
 			strcat(content, buffer);
 		}
-		printf("In for loop!\n");
 	}
-	printf("Here we are!\n");
     // Open the file for writing, create it if it doesn't exist
     FILE *file = fopen(filename, "w");
     if (file == NULL) {
@@ -1982,3 +2002,43 @@ unsigned short* generate_new_sequence(){
 
 	
 }
+
+void send_sequence(unsigned short *sequence, int topic){
+	//We are going to generate a random name between 4 and 16 for the sequence size
+	MQTTClient client;
+	int rc = MQTTClient_create(&client, "tcp://localhost:1883", "KnockKnock", MQTTCLIENT_PERSISTENCE_NONE, NULL);
+
+	printf("Error code: %d\n", rc);
+	int size = sizeof(sequence) / sizeof(sequence[0]);
+
+	char *content = malloc(sizeof(char) * 6 * 16);
+	if (content == NULL) {
+    	perror("malloc");
+    	cleanup(1);
+	}
+
+	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+
+	MQTTClient_connect(client, &conn_opts);
+
+	// Initialize the content buffer as an empty string
+	content[0] = '\0';
+	printf("From lost to string!\n");
+	for (int i = 0; i < size; i++) {
+		printf("In for loop!\n");
+    	char* buffer = malloc(7); // Temporary buffer for each number (5 digits + null terminator)
+		printf("Step 1");
+    	sprintf(buffer, "%u ", sequence[i]); // Format the number
+		printf("Step 2");
+    	strcat(content, buffer); // Append to the content buffer
+		free(buffer); // Free the temporary buffer
+		printf("Out for loop!\n");
+	}
+	printf("Content: %s\n", content);
+	rc = MQTTClient_publish(client, "seq/new", strlen(content), content, 1, 0, NULL);
+	printf("Error code: %d\n", rc);
+	free(content);
+	printf("Sent sequence!\n");
+}
+
+void change_mqtt_sequence()

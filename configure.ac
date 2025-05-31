@@ -21,6 +21,9 @@ AC_CHECK_LIB([ssl], [OPENSSL_init_ssl], ,
 AC_CHECK_LIB([crypto], [CRYPTO_malloc], ,
   [AC_MSG_ERROR([you need the OpenSSL crypto library to build this program])])
 
+AC_CHECK_LIB([paho-mqtt3c], [MQTTClient_create], ,
+  [AC_MSG_ERROR([you need the Paho MQTT C library (libpaho-mqtt3c) to build this program])])
+
 AM_CONDITIONAL([BUILD_KNOCKD], [test "x$enable_knockd" != "xno"])
 
 AC_CONFIG_FILES([Makefile])
