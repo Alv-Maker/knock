@@ -106,13 +106,15 @@ typedef struct opendoor {
 	char *pcap_filter_expv6;
 } opendoor_t;
 
-/* New MQTT tuples. opendoor_t now is MQTT data*/
+/* The credentials that let you access knockd through MQTT */
 
 typedef struct {
 	unsigned short sequence[SEQ_MAX];
 	unsigned char anchorTopic[8];
 	unsigned char sailerTopic[8];
-	unsigned char dataSequence[SEQ_MAX];
+	unsigned char keySequence[SEQ_MAX];
+	unsigned int MQTT_port;
+
 } credential;
 
 PMList *doors = NULL;
@@ -123,6 +125,7 @@ PMList *credentials = NULL;
  */
 typedef struct knocker {
 	opendoor_t *door;
+	credential *cred;
 	short stage;
 	char src[64];   /* IP address */
 	char *srchost;  /* Hostname */
@@ -210,6 +213,14 @@ int main(int argc, char **argv)
 		{"version",   no_argument,       0, 'V'},
 		{0, 0, 0, 0}
 	};
+
+	credential *cred = malloc(sizeof(credential));
+	strcpy((char*)cred->anchorTopic, "knockd/anchor");
+	strcpy((char*)cred->sailerTopic, "knockd/sailer");
+	strcpy((char*)cred->keySequence, "1000 2000 3000 4000 5000");
+	cred->MQTT_port = 1883;
+
+	list_add(&credentials, cred);
 
 	while((opt = getopt_long(argc, argv, "4vDdli:c:p:g:hV", opts, &optidx))) {
 		if(opt < 0) {
@@ -971,6 +982,7 @@ void generate_pcap_filter()
 {
 	PMList *lp;
 	opendoor_t *door;
+	credential *cred;
 	ip_literal_t *myip;
 	char *buffer = NULL;   /* temporary buffer to create the individual filter strings */
 	size_t bufsize = 0;    /* size of buffer */
@@ -997,15 +1009,9 @@ void generate_pcap_filter()
 		if(ipv6 && o_skipIpV6)
 			continue;
 
-		for(lp = doors; lp; lp = lp->next) {
-			door = (opendoor_t*)lp->data;
+		for(lp = credentials; lp; lp = lp->next) {
+			cred = (credential*)lp->data;
 
-			if(ipv6 == 0 && door->pcap_filter_exp != NULL) {
-				continue;
-			}
-			if(ipv6 == 1 && door->pcap_filter_expv6 != NULL) {
-				continue;
-			}
 
 			/* if we get here at least one door had a pcap_filter_exp == NULL */
 			modified_filters = 1;
@@ -1038,15 +1044,15 @@ void generate_pcap_filter()
 				} else {
 					bufsize = realloc_strcat(&buffer, " or dst host ", bufsize);
 				}
-				bufsize = realloc_strcat(&buffer, door->target ? door->target : myip->value, bufsize);
+				bufsize = realloc_strcat(&buffer, myip->value, bufsize);
 			}
 
 			bufsize = realloc_strcat(&buffer, ") and (", bufsize);
 			head_set = 0;
 
 			/* generate filter for all TCP ports (i.e. "((tcp dst port 4000 or 4001 or 4002) and tcp[tcpflags] & tcp-syn != 0)" */
-			for(i = 0; i < door->seqcount; i++) {
-				if(door->protocol[i] == IPPROTO_TCP) {
+			for(i = 0; i < cred->seqCount; i++) {
+				//if(door->protocol[i] == IPPROTO_TCP) {
 					if(!head_set) {		/* first TCP port in the sequence */
 						bufsize = realloc_strcat(&buffer, "((tcp dst port ", bufsize);
 						head_set = 1;
@@ -1054,9 +1060,9 @@ void generate_pcap_filter()
 					} else {		/* not the first TCP port in the sequence */
 						bufsize = realloc_strcat(&buffer, " or ", bufsize);
 					}
-					snprintf(port_str, sizeof(port_str), "%hu", door->sequence[i]);		/* unsigned short to string */
+					snprintf(port_str, sizeof(port_str), "%hu", cred->keySequence[i]);		/* unsigned short to string */
 					bufsize = realloc_strcat(&buffer, port_str, bufsize);			/* append port number */
-				}
+				//}
 			}
 			if(tcp_present) {
 				bufsize = realloc_strcat(&buffer, ")", bufsize);		/* close parentheses of TCP ports */
@@ -1064,7 +1070,7 @@ void generate_pcap_filter()
 
 			/* append the TCP flag filters */ 
 			if(tcp_present) {
-				if(door->flag_fin != DONT_CARE) {
+				/*if(door->flag_fin != DONT_CARE) {
 					if(ipv6)
 						bufsize = realloc_strcat(&buffer, " and ip6[13+40] & tcp-fin ", bufsize);//using directly mask as pcap didn't yet support flags for IPv6
 					else
@@ -1135,33 +1141,33 @@ void generate_pcap_filter()
 					if(door->flag_urg == NOT_SET) {
 						bufsize = realloc_strcat(&buffer, "== 0", bufsize);
 					}
-				}
+				}*/
 				bufsize = realloc_strcat(&buffer, ")", bufsize);		/* close parentheses of flags */
 			}
 
 			/* append filter for all UDP ports (i.e. "(udp dst port 6543 or 6544 or 6545)" */
-			head_set = 0;
-			for(i = 0; i < door->seqcount; i++) {
-				if(door->protocol[i] == IPPROTO_UDP) {
-					if(!head_set) {		/* first UDP port in the sequence */
-						if(tcp_present) {
-							bufsize = realloc_strcat(&buffer, " or ", bufsize);
-						}
-						bufsize = realloc_strcat(&buffer, "(udp dst port ", bufsize);
-						head_set = 1;
-						udp_present = 1;
-					} else {		/* not the first UDP port in the sequence */
-						bufsize = realloc_strcat(&buffer, " or ", bufsize);
-					}
-					snprintf(port_str, sizeof(port_str), "%hu", door->sequence[i]);		/* unsigned short to string */
-					bufsize = realloc_strcat(&buffer, port_str, bufsize);			/* append port number */
-				}
-			}
-			if(udp_present) {
-				bufsize = realloc_strcat(&buffer, ")", bufsize);		/* close parentheses of UDP ports */
-			}
-
-			bufsize = realloc_strcat(&buffer, "))", bufsize);		/* close parantheses around port filters */
+			//head_set = 0;
+			//for(i = 0; i < door->seqcount; i++) {
+			//	if(door->protocol[i] == IPPROTO_UDP) {
+			//		if(!head_set) {		/* first UDP port in the sequence */
+			//			if(tcp_present) {
+			//				bufsize = realloc_strcat(&buffer, " or ", bufsize);
+			//			}
+			//			bufsize = realloc_strcat(&buffer, "(udp dst port ", bufsize);
+			//			head_set = 1;
+			//			udp_present = 1;
+			//		} else {		/* not the first UDP port in the sequence */
+			//			bufsize = realloc_strcat(&buffer, " or ", bufsize);
+			//		}
+			//		snprintf(port_str, sizeof(port_str), "%hu", door->sequence[i]);		/* unsigned short to string */
+			//		bufsize = realloc_strcat(&buffer, port_str, bufsize);			/* append port number */
+			//	}
+			//}
+			//if(udp_present) {
+			//	bufsize = realloc_strcat(&buffer, ")", bufsize);		/* close parentheses of UDP ports */
+			//}
+//
+			//bufsize = realloc_strcat(&buffer, "))", bufsize);		/* close parantheses around port filters */
 
 			/* test if in any of the precedent calls to realloc_strcat() failed. We can do this safely here because
 			* realloc_strcat() returns 0 on failure and if a buffer size of 0 is passed to it, the function does
@@ -1222,8 +1228,8 @@ void generate_pcap_filter()
 	if(modified_filters) {
 		/* iterate over all doors */
 		int first = 1;
-		for(lp = doors; lp; lp = lp->next) {
-			door = (opendoor_t*)lp->data;
+		for(lp = credentials; lp; lp = lp->next) {
+			cred = (credential*)lp->data;
 			for(ipv6 = 0 ; ipv6 <= 1 ; ipv6++)
 			{
 				if(ipv6 == 0 && !has_ipv4)
@@ -1335,7 +1341,8 @@ void unvalidate_credentials(credential *cred)
 	credentials = list_remove(credentials, cred);
 	free(cred->anchorTopic);
 	free(cred->sailerTopic);
-	free(cred->sequence);
+	free(cred->keySequence);
+	
 }
 
 /* Get the IP address of an interface
@@ -1456,6 +1463,40 @@ int exec_cmd(char* command, char* name){
 		logprint("%s: command returned non-zero status code (%d)", name, WEXITSTATUS(ret));
 	}
 	return ret;
+}
+
+int open_mqtt_port(knocker_t sealer){
+	int ret;
+	if(sealer.cred->MQTT_port == 0) {
+		vprint("no mqtt port configured for door %s, skipping...\n", sealer.door->name);
+		return 0;
+	}
+	// Open the MQTT port
+	char command[100];
+	snprintf(command, sizeof(command), "iptables -A INPUT -p tcp --dport %d -j ACCEPT", sealer.cred->MQTT_port);
+	ret = system(command);
+	if(ret != 0) {
+		vprint("failed to open mqtt port for door %s, skipping...\n", sealer.door->name);
+		return 1;
+	}
+	return 0;
+}
+
+int close_mqtt_port(knocker_t sealer){
+	int ret;
+	if(sealer.cred->MQTT_port == 0) {
+		vprint("no mqtt port configured for door %s, skipping...\n", sealer.door->name);
+		return 0;
+	}
+	// Close the MQTT port
+	char command[100];
+	snprintf(command, sizeof(command), "iptables -D INPUT -p tcp --dport %d -j ACCEPT", sealer.cred->MQTT_port);
+	ret = system(command);
+	if(ret != 0) {
+		vprint("failed to close mqtt port for door %s, skipping...\n", sealer.door->name);
+		return 1;
+	}
+	return 0;
 }
 
 /*
