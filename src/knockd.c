@@ -110,12 +110,13 @@ typedef struct opendoor {
 
 typedef struct {
 	unsigned short sequence[SEQ_MAX];
-	unsigned char anchorTopic[8];
-	unsigned char sailerTopic[8];
-	unsigned char keySequence[SEQ_MAX];
+	unsigned char anchorTopic[80];
+	unsigned char sailerTopic[80];
+	unsigned short keySequence[SEQ_MAX];
+	unsigned short keySequenceCount;
 	unsigned int MQTT_port;
 
-} credential;
+} credential_t;
 
 PMList *doors = NULL;
 PMList *credentials = NULL;
@@ -125,7 +126,7 @@ PMList *credentials = NULL;
  */
 typedef struct knocker {
 	opendoor_t *door;
-	credential *cred;
+	credential_t *cred;
 	short stage;
 	char src[64];   /* IP address */
 	char *srchost;  /* Hostname */
@@ -214,13 +215,19 @@ int main(int argc, char **argv)
 		{0, 0, 0, 0}
 	};
 
-	credential *cred = malloc(sizeof(credential));
+	printf("knockd %s\n", version);
+
+	credential_t *cred = malloc(sizeof(credential_t));
 	strcpy((char*)cred->anchorTopic, "knockd/anchor");
 	strcpy((char*)cred->sailerTopic, "knockd/sailer");
-	strcpy((char*)cred->keySequence, "1000 2000 3000 4000 5000");
+	cred->keySequenceCount = 1;
+	cred->keySequence[0] = 1234; // Default key sequence
 	cred->MQTT_port = 1883;
 
-	list_add(&credentials, cred);
+
+
+	credentials = list_add(credentials, cred);
+
 
 	while((opt = getopt_long(argc, argv, "4vDdli:c:p:g:hV", opts, &optidx))) {
 		if(opt < 0) {
@@ -982,7 +989,7 @@ void generate_pcap_filter()
 {
 	PMList *lp;
 	opendoor_t *door;
-	credential *cred;
+	credential_t *cred;
 	ip_literal_t *myip;
 	char *buffer = NULL;   /* temporary buffer to create the individual filter strings */
 	size_t bufsize = 0;    /* size of buffer */
@@ -1009,8 +1016,11 @@ void generate_pcap_filter()
 		if(ipv6 && o_skipIpV6)
 			continue;
 
+		vprint("Reach1");
+
 		for(lp = credentials; lp; lp = lp->next) {
-			cred = (credential*)lp->data;
+			cred = (credential_t*)lp->data;
+			vprint("Reach2");
 
 
 			/* if we get here at least one door had a pcap_filter_exp == NULL */
@@ -1051,7 +1061,7 @@ void generate_pcap_filter()
 			head_set = 0;
 
 			/* generate filter for all TCP ports (i.e. "((tcp dst port 4000 or 4001 or 4002) and tcp[tcpflags] & tcp-syn != 0)" */
-			for(i = 0; i < cred->seqCount; i++) {
+			for(i = 0; i < cred->keySequenceCount; i++) {
 				//if(door->protocol[i] == IPPROTO_TCP) {
 					if(!head_set) {		/* first TCP port in the sequence */
 						bufsize = realloc_strcat(&buffer, "((tcp dst port ", bufsize);
@@ -1067,6 +1077,8 @@ void generate_pcap_filter()
 			if(tcp_present) {
 				bufsize = realloc_strcat(&buffer, ")", bufsize);		/* close parentheses of TCP ports */
 			}
+
+			vprint("Reach3");
 
 			/* append the TCP flag filters */ 
 			if(tcp_present) {
@@ -1145,6 +1157,8 @@ void generate_pcap_filter()
 				bufsize = realloc_strcat(&buffer, ")", bufsize);		/* close parentheses of flags */
 			}
 
+			vprint("Reach4");
+
 			/* append filter for all UDP ports (i.e. "(udp dst port 6543 or 6544 or 6545)" */
 			//head_set = 0;
 			//for(i = 0; i < door->seqcount; i++) {
@@ -1166,8 +1180,8 @@ void generate_pcap_filter()
 			//if(udp_present) {
 			//	bufsize = realloc_strcat(&buffer, ")", bufsize);		/* close parentheses of UDP ports */
 			//}
-//
-			//bufsize = realloc_strcat(&buffer, "))", bufsize);		/* close parantheses around port filters */
+
+			bufsize = realloc_strcat(&buffer, "))", bufsize);		/* close parantheses around port filters */
 
 			/* test if in any of the precedent calls to realloc_strcat() failed. We can do this safely here because
 			* realloc_strcat() returns 0 on failure and if a buffer size of 0 is passed to it, the function does
@@ -1200,7 +1214,10 @@ void generate_pcap_filter()
 			}
 			buffer[0] = '\0';	/* "clear" the buffer */
 		}
+		vprint("Reach5");
 	}
+
+	vprint("Reach6");
 
 
 	/* generate the whole pcap filter string if a filter had been modified. Reuse
@@ -1229,7 +1246,7 @@ void generate_pcap_filter()
 		/* iterate over all doors */
 		int first = 1;
 		for(lp = credentials; lp; lp = lp->next) {
-			cred = (credential*)lp->data;
+			cred = (credential_t*)lp->data;
 			for(ipv6 = 0 ; ipv6 <= 1 ; ipv6++)
 			{
 				if(ipv6 == 0 && !has_ipv4)
@@ -1258,6 +1275,7 @@ void generate_pcap_filter()
 			cleanup(1);
 		}
 
+		vprint("adding pcap expression for all doors: %s\n", buffer);
 		if(pcap_compile(cap, &bpf_prog, buffer, 1, 0) < 0) {	/* optimize filter (1), no netmask (0) (we're not interested in broadcasts) */
 			pcap_perror(cap, "pcap_compile");
 			cleanup(1);
@@ -1336,7 +1354,7 @@ void close_door(opendoor_t *door)
 	free_door(door);
 }
 
-void unvalidate_credentials(credential *cred)
+void unvalidate_credentials(credential_t *cred)
 {
 	credentials = list_remove(credentials, cred);
 	free(cred->anchorTopic);
@@ -1611,7 +1629,7 @@ void process_attempt(knocker_t *attempt)
 		vprint("%s: %s: Stage %d\n", attempt->src, attempt->door->name, attempt->stage);
 		logprint("%s: %s: Stage %d", attempt->src, attempt->door->name, attempt->stage);
 	}
-	if(attempt->stage >= attempt->door->seqcount) {
+	if(attempt->stage >= attempt->cred->keySequenceCount) {
 		if(attempt->srchost) {
 			vprint("%s (%s): %s: OPEN SESAME\n", attempt->src, attempt->srchost, attempt->door->name);
 			logprint("%s (%s): %s: OPEN SESAME", attempt->src, attempt->srchost, attempt->door->name);
@@ -1648,6 +1666,7 @@ void process_attempt(knocker_t *attempt)
 
 				/* all parsing ok --> execute the parsed (%IP% = source IP) command */
 				exec_cmd(parsed_start_cmd, attempt->door->name);
+				open_mqtt_port(*attempt); /* open the MQTT port if configured */
 				/* if stop_command is set, sleep for cmd_timeout and run it*/
 				if(stop_command){
 					sleep(attempt->door->cmd_timeout);
@@ -1713,6 +1732,7 @@ void sniff(u_char* arg, const struct pcap_pkthdr* hdr, const u_char* packet)
 	PMList *found_attempts = NULL, *found_attempt;
 	int ip_proto = 0;
 	int from_ipv6 = 0;
+
 
 	if(lltype == DLT_EN10MB) {
 		eth = (struct ether_header*)packet;
@@ -1816,6 +1836,8 @@ void sniff(u_char* arg, const struct pcap_pkthdr* hdr, const u_char* packet)
 
 	dprint("%s %s: %s: %s:%d -> %s:%d %d bytes\n", pkt_date, pkt_time,
 			proto, src_ip, sport, dst_ip, dport, hdr->len);
+	vprint("%s %s: %s: %s:%d -> %s:%d %d bytes\n", pkt_date, pkt_time,
+			proto, src_ip, sport, dst_ip, dport, hdr->len);
 
 	/* clean up expired/completed/failed attempts */
 	lp = attempts;
@@ -1890,14 +1912,15 @@ void sniff(u_char* arg, const struct pcap_pkthdr* hdr, const u_char* packet)
 		found_attempts = list_add(found_attempts, NULL);
 	}
 
+	//TODO: change door to MQTT door
 	for(found_attempt = found_attempts; found_attempt != NULL; found_attempt = found_attempt->next) {
 		attempt = (knocker_t*)found_attempt->data;
 		found_attempt->data = NULL;
 
 		if(attempt) {
 			int flagsmatch = flags_match(attempt->door, ip_proto, tcp);
-			if(flagsmatch && ip_proto == attempt->door->protocol[attempt->stage] &&
-					dport == attempt->door->sequence[attempt->stage]) {
+			if(flagsmatch && /*ip_proto == attempt->door->protocol[attempt->stage] &&*/
+					dport == attempt->cred->keySequence[attempt->stage]) {
 				process_attempt(attempt);
 			} else if(flagsmatch == 0) {
 				/* TCP flags didn't match -- just ignore this packet, don't
@@ -2081,5 +2104,3 @@ void send_sequence(unsigned short *sequence, int topic){
 	free(content);
 	printf("Sent sequence!\n");
 }
-
-void change_mqtt_sequence()
