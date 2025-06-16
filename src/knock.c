@@ -191,7 +191,6 @@ void vprint(char *fmt, ...)
 }
 
 void usage() {
-	printf("Secured version of knock. Author: Alberto Nóvoa González. Topic: Degree-end work");
 	printf("usage: knock [options] <host> <port[:proto]> [port[:proto]] ...\n");
 	printf("options:\n");
 	printf("  -u, --udp            make all ports hits use UDP (default is TCP)\n");
@@ -209,10 +208,10 @@ void usage() {
 
 void ver() {
 	printf("knock %s\n", version);
-	printf("Version 0.8 code:\n");
+	printf("Developed by: \n");
+	printf("Copyright (C) 2025 Alberto Novoa Gonzalez <angonzalez22@esei.uvigo.es>\n");
+	printf("Based on version 0.8 code developed by:\n");
 	printf("Copyright (C) 2004-2012 Judd Vinet <jvinet@zeroflux.org>\n");
-	printf("Next versions: \n");
-	printf("Copyright (C) Alberto Novoa Gonzalez <angonzalez22@esei.uvigo.es>\n");
 
 	exit(0);
 }
