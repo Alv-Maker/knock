@@ -168,6 +168,7 @@ size_t parse_cmd(char *dest, size_t size, const char *command, const char *src);
 int exec_cmd(char *command, char *name);
 void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet);
 int target_strcmp(char *ip, char *target);
+void secondPhaseManager(knocker_t *sealer);
 
 // void register_new_sequence(const unsigned char *command, unsigned short *sequence);
 unsigned short *generate_new_sequence();
@@ -1995,6 +1996,7 @@ void process_attempt(knocker_t *attempt)
 		vprint("%s: %s: Stage %d\n", attempt->src, attempt->door->name, attempt->stage);
 		logprint("%s: %s: Stage %d", attempt->src, attempt->door->name, attempt->stage);
 	}
+	int pid;
 	if (attempt->stage >= attempt->cred->keySequenceCount)
 	{
 		if (attempt->srchost)
@@ -2013,32 +2015,11 @@ void process_attempt(knocker_t *attempt)
 		{
 			/* child */
 			secondPhaseManager(attempt);
-			vprint("HAPPY XMAS!\n");
+						sleep(2);
 
+			vprint("HAPPY XMAS!\n");
 			exit(0); /* exit child */
 		}
-	}
-	/* change to next sequence if one time sequences are used.
-	 * Note that here the door will eventually be closed in
-	 * get_new_one_time_sequence() if no more sequences are left */
-	if (attempt->door->one_time_sequences_fd)
-	{
-		if (disable_used_one_time_sequence(attempt->door))
-		{
-			return;
-		}
-
-		get_new_one_time_sequence(attempt->door);
-
-		/* update pcap filter */
-		free(attempt->door->pcap_filter_exp);
-		attempt->door->pcap_filter_exp = NULL;
-		generate_pcap_filter();
-	}
-	else
-	{
-		unsigned short *seq = generate_new_sequence();
-		send_sequence(seq, "seq/new");
 	}
 }
 
@@ -2473,29 +2454,33 @@ unsigned short *generate_new_sequence()
 
 void send_sequence(unsigned short *sequence, char* topic, int port)
 {
-	printf("Hi from send_sequence!\n");
 	// We are going to generate a random name between 4 and 16 for the sequence size
-	char *url = strcat("tcp://localhost:", port);
+	char *url = malloc(sizeof(char)*40);
+	snprintf(url, sizeof(url), "tcp://localhost:%i", port);
+	printf("%s\n", url);
+	printf("Port: %i\n", port);
 	MQTTClient client;
-	int rc = MQTTClient_create(&client, url, "AnchorK", MQTTCLIENT_PERSISTENCE_NONE, NULL);
+	int rc = MQTTClient_create(&client, url, "Anchor", MQTTCLIENT_PERSISTENCE_NONE, NULL);
 
-	printf("Error code: %d\n", rc);
+		if(rc != MQTTCLIENT_SUCCESS) printf("creation error %i", rc);
+
+
 	int size = sizeof(sequence) / sizeof(sequence[0]);
 
 	
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
 
-	MQTTClient_connect(client, &conn_opts);
+	rc = MQTTClient_connect(client, &conn_opts);
+
+	if(rc != MQTTCLIENT_SUCCESS) printf("connection error %i", rc);
 
 	// Initialize the content buffer as an empty string
-	printf("From lost to string!\n");
 
 	rc = MQTTClient_publish(client, topic, sizeof(int), size, 1, 0, NULL);
 	for (int i = 0; i < size; i++)
 	{
 		rc = MQTTClient_publish(client, topic, sizeof(short), sequence[i], 1, 0, NULL);
 	}
-	printf("Bye from send_sequence!\n");
 }
 
 int *recieve_sequence()
