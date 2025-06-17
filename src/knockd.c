@@ -2473,6 +2473,7 @@ unsigned short *generate_new_sequence()
 
 void send_sequence(unsigned short *sequence, char* topic, int port)
 {
+	printf("Hi from send_sequence!\n");
 	// We are going to generate a random name between 4 and 16 for the sequence size
 	char *url = strcat("tcp://localhost:", port);
 	MQTTClient client;
@@ -2494,6 +2495,7 @@ void send_sequence(unsigned short *sequence, char* topic, int port)
 	{
 		rc = MQTTClient_publish(client, topic, sizeof(short), sequence[i], 1, 0, NULL);
 	}
+	printf("Bye from send_sequence!\n");
 }
 
 int *recieve_sequence()
@@ -2556,6 +2558,6 @@ void secondPhaseManager(knocker_t *sealer)
 	open_mqtt_port(*sealer);
 	send_sequence(sealer->cred->sequence, sealer->cred->anchorTopic, sealer->cred->MQTT_port);
 	
-	receive_sequence();
-	close_mqtt_port(*sealer);
+	//receive_sequence();
+	//close_mqtt_port(*sealer);
 }

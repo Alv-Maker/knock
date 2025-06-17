@@ -50,7 +50,7 @@ static char version[] = "0.9";
 void vprint(char *fmt, ...);
 void ver();
 void usage();
-char* get_new_sequence();
+int* get_new_sequence();
 
 int o_verbose = 0;
 int o_udp     = 0;
@@ -169,7 +169,7 @@ int main(int argc, char** argv)
 		freeaddrinfo(infoptr);
 	}
 
-	char *seq = get_new_sequence();
+	char *seq = get_new_sequence(ipname, 1234);
 	if(seq == NULL) {
 		fprintf(stderr, "Failed to get new sequence\n");
 		exit(1);
@@ -216,24 +216,43 @@ void ver() {
 	exit(0);
 }
 
-char* get_new_sequence(){
+int* get_new_sequence(char *host, unsigned port){
 	MQTTClient client;
-	//sleep(2);
-	int rc = MQTTClient_create(&client, "tcp://localhost:1883", "Knock-client", MQTTCLIENT_PERSISTENCE_NONE, NULL);
+
+	char url[40];
+	snprintf(url, sizeof(url), "tcp://%s:%u", host, port);
+
+	int rc = MQTTClient_create(&client, url, "sailer", MQTTCLIENT_PERSISTENCE_NONE, NULL);
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
 	
 	MQTTClient_connect(client, &conn_opts);
-	MQTTClient_subscribe(client, "seq/new", 0);
+	MQTTClient_subscribe(client, "knockd/anchor", 0);
 	MQTTClient_message* msg;
+	unsigned int sizeSequence = 0;
+
 	char *topic = NULL;
 	int topic_len = 0;
 	printf("Waiting for new sequence...\n");
 	
 	rc = MQTTClient_receive(client, &topic, &topic_len, &msg, 5000);
-	printf("Error code: %d\n", rc);
-	printf("Received new sequence: %s\n", msg->payload);
+	sizeSequence = atoi(msg->payload);
+	int sequence[sizeSequence];
+	for(int i = 0; i < sizeSequence; i++) {
+		rc = MQTTClient_receive(client, &topic, &topic_len, &msg, 5000);
+		if(rc != MQTTCLIENT_SUCCESS || msg == NULL) {
+			fprintf(stderr, "Failed to receive message, return code: %d\n", rc);
+			MQTTClient_disconnect(client, 1000);
+			MQTTClient_destroy(&client);
+			return NULL;
+		}
+		sequence[i] = atoi(msg->payload);
+		printf("Received port %i: %d\n", i, sequence[i]);
+	}
 	printf("Please take note of the sequence and don't share it with anyone.\n");
 	MQTTClient_freeMessage(&msg);
+	MQTTClient_disconnect(client, 1000);
+	MQTTClient_destroy(&client);
+	return &sequence;
 }
 
 /* vim: set ts=2 sw=2 noet: */
