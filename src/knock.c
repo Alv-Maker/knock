@@ -36,7 +36,6 @@
 #include <fcntl.h>
 #include <MQTTClient.h>
 
-
 static char version[] = "0.9";
 
 #define PROTO_TCP 1
@@ -50,139 +49,167 @@ static char version[] = "0.9";
 void vprint(char *fmt, ...);
 void ver();
 void usage();
-int* get_new_sequence();
+unsigned short *get_new_sequence(char *host, unsigned short port);
+unsigned short *parse_port_sequence();
+char *do_knocking(const char *hostname, unsigned short *sequence);
 
 int o_verbose = 0;
-int o_udp     = 0;
-int o_delay   = 0;
-int o_ip      = IP_DEFAULT;
+int o_udp = 0;
+int o_delay = 0;
+int o_ip = IP_DEFAULT;
 
-int main(int argc, char** argv)
+int main(int argc, char **argv)
 {
 	int sd;
 	int opt, optidx = 1;
-	struct addrinfo hints;
-	struct addrinfo *infoptr;
-	char ipname[256];
+
+	char *ipname = malloc(256);
 	int result;
 	char *hostname;
 	static struct option opts[] =
-	{
-		{"verbose",   no_argument,       0, 'v'},
-		{"udp",       no_argument,       0, 'u'},
-		{"delay",     required_argument, 0, 'd'},
-		{"help",      no_argument,       0, 'h'},
-		{"version",   no_argument,       0, 'V'},
-		{"ipv4",      no_argument,       0, '4'},
-		{"ipv6",      no_argument,       0, '6'},
-		{0, 0, 0, 0}
-	};
+		{
+			{"verbose", no_argument, 0, 'v'},
+			{"udp", no_argument, 0, 'u'},
+			{"delay", required_argument, 0, 'd'},
+			{"help", no_argument, 0, 'h'},
+			{"version", no_argument, 0, 'V'},
+			{"ipv4", no_argument, 0, '4'},
+			{"ipv6", no_argument, 0, '6'},
+			{0, 0, 0, 0}};
 
-	while((opt = getopt_long(argc, argv, "vud:hV46", opts, &optidx))) {
-		if(opt < 0) {
+	while ((opt = getopt_long(argc, argv, "vud:hV46", opts, &optidx)))
+	{
+		if (opt < 0)
+		{
 			break;
 		}
-		switch(opt) {
-			case 0:   break;
-			case 'v': o_verbose = 1; break;
-			case 'u': o_udp = 1; break;
-			case 'd': o_delay = (int)atoi(optarg); break;
-			case 'V': ver();
-			case '4': o_ip = IP_V4; break;
-			case '6': o_ip = IP_V6; break;
-			case 'h': /* fallthrough */
-			default: usage();
+		switch (opt)
+		{
+		case 0:
+			break;
+		case 'v':
+			o_verbose = 1;
+			break;
+		case 'u':
+			o_udp = 1;
+			break;
+		case 'd':
+			o_delay = (int)atoi(optarg);
+			break;
+		case 'V':
+			ver();
+		case '4':
+			o_ip = IP_V4;
+			break;
+		case '6':
+			o_ip = IP_V6;
+			break;
+		case 'h': /* fallthrough */
+		default:
+			usage();
 		}
 	}
-	if((argc - optind) < 2) {
+	if ((argc - optind) < 2)
+	{
 		usage();
 	}
 
-	if(o_delay < 0) {
+	if (o_delay < 0)
+	{
 		fprintf(stderr, "error: delay cannot be negative\n");
 		exit(1);
 	}
 
 	/* prepare hints to select ipv4 or v6 if asked */
-	memset(&hints, 0, sizeof hints);
-	hints.ai_family = o_ip;
+
 	hostname = argv[optind++];
 
-	for(; optind < argc; optind++) {
-		unsigned short proto = PROTO_TCP;
-		const char *port;
-		char *ptr, *arg = strdup(argv[optind]);
-
-		if((ptr = strchr(arg, ':'))) {
-			*ptr = '\0';
-			port = arg;
-			arg = ++ptr;
-			if(!strcmp(arg, "udp")) {
-				proto = PROTO_UDP;
-			} else {
-				proto = PROTO_TCP;
-			}
-		} else {
-			port = arg;
-		}
-
-		/* get host and port based on hints */
-		result = getaddrinfo(hostname, port, &hints, &infoptr);
-		if(result) {
-			fprintf(stderr, "Failed to resolve hostname '%s' on port %s\n", hostname, port);
-			fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(result));
-			exit(1);
-		}
-
-		/* create socket */
-		if(o_udp || proto == PROTO_UDP) {
-			sd = socket(infoptr->ai_family, SOCK_DGRAM, 0);
-			if(sd == -1) {
-				fprintf(stderr, "Cannot open socket\n");
-				exit(1);
-			}
-		} else {
-			int flags;
-			sd = socket(infoptr->ai_family, SOCK_STREAM, 0);
-			if(sd == -1) {
-				fprintf(stderr, "Cannot open socket\n");
-				exit(1);
-			}
-			flags = fcntl(sd, F_GETFL, 0);
-			fcntl(sd, F_SETFL, flags | O_NONBLOCK);
-		}
-
-		/* extract ip as string (v4 or v6) */
-		getnameinfo(infoptr->ai_addr, infoptr->ai_addrlen, ipname, sizeof(ipname), NULL, 0, NI_NUMERICHOST);
-
-		/* connect or send UDP packet */
-		if(o_udp || proto == PROTO_UDP) {
-			vprint("hitting udp %s:%s\n", ipname, port);
-			sendto(sd, "", 1, 0, infoptr->ai_addr, infoptr->ai_addrlen);
-		} else {
-			vprint("hitting tcp %s:%s\n", ipname, port);
-			connect(sd, infoptr->ai_addr, infoptr->ai_addrlen);
-		}
-
-		close(sd);
-		usleep(1000*o_delay);
-		freeaddrinfo(infoptr);
+	// TODO: use parsing to get the sequence, and use the arguments as data later
+	unsigned short *sequence = parse_port_sequence();
+	if (sequence == NULL)
+	{
+		fprintf(stderr, "Failed to parse port sequence\n");
+		exit(1);
+	}
+	for (int i = 0; sequence[i] != 0; i++)
+	{
+		vprint("Parsed port: %hu\n", sequence[i]);
 	}
 
-	char *seq = get_new_sequence(ipname, 1234);
-	if(seq == NULL) {
+	ipname = do_knocking(hostname, sequence);
+
+	char *seq = get_new_sequence(ipname, 1883);
+	if (seq == NULL)
+	{
 		fprintf(stderr, "Failed to get new sequence\n");
 		exit(1);
 	}
 	printf("New sequence: %s\n", seq);
 
-	return(0);
+	MQTTClient client;
+	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+
+	char *url = malloc(40);
+
+	snprintf(url, 40, "tcp://%s:%d", ipname, 1883);
+
+	vprint("Connecting to MQTT broker at %s\n", url);
+
+	int rc = MQTTClient_create(&client, url, "knock_client", MQTTCLIENT_PERSISTENCE_NONE, NULL);
+	if (rc != MQTTCLIENT_SUCCESS)
+	{
+		fprintf(stderr, "Failed to create MQTT client, return code: %d\n", rc);
+		free(url);
+		exit(1);
+	}
+
+	sleep(2);
+
+	MQTTClient_connect(client, &conn_opts);
+	if (rc != MQTTCLIENT_SUCCESS)
+	{
+		fprintf(stderr, "Failed to connect MQTT client, return code: %d\n", rc);
+		MQTTClient_destroy(&client);
+		free(url);
+		exit(1);
+	}
+
+	vprint("Connected to MQTT broker at %s\n", url);
+
+	for (; optind < argc; optind++)
+	{
+		unsigned short proto = PROTO_TCP;
+		const char *port;
+		char *ptr, *arg = strdup(argv[optind]);
+		vprint("Processing argument: %s\n", arg);
+
+		if ((ptr = strchr(arg, ':')))
+		{
+			*ptr = '\0';
+			port = arg;
+			arg = ++ptr;
+
+			proto = PROTO_TCP;
+		}
+		else
+		{
+			port = arg;
+		}
+
+		MQTTClient_publish(client, "knockd/sailer", strlen(port), port, 2, 0, NULL);
+		MQTTClient_yield();
+	}
+
+	
+
+	return (0);
 }
 
 void vprint(char *fmt, ...)
 {
 	va_list args;
-	if(o_verbose) {
+	if (o_verbose)
+	{
 		va_start(args, fmt);
 		vprintf(fmt, args);
 		va_end(args);
@@ -190,7 +217,8 @@ void vprint(char *fmt, ...)
 	}
 }
 
-void usage() {
+void usage()
+{
 	printf("usage: knock [options] <host> <port[:proto]> [port[:proto]] ...\n");
 	printf("options:\n");
 	printf("  -u, --udp            make all ports hits use UDP (default is TCP)\n");
@@ -206,7 +234,8 @@ void usage() {
 	exit(1);
 }
 
-void ver() {
+void ver()
+{
 	printf("knock %s\n", version);
 	printf("Developed by: \n");
 	printf("Copyright (C) 2025 Alberto Novoa Gonzalez <angonzalez22@esei.uvigo.es>\n");
@@ -216,43 +245,179 @@ void ver() {
 	exit(0);
 }
 
-int* get_new_sequence(char *host, unsigned port){
+unsigned short *get_new_sequence(char *host, unsigned short port)
+{
 	MQTTClient client;
+	FILE *fp;
+	fp = fopen("seq.conf", "w");
+	if (fp == NULL)
+	{
+		fprintf(stderr, "Failed to open seq.conf for writing\n");
+		return NULL;
+	}
 
 	char url[40];
-	snprintf(url, sizeof(url), "tcp://%s:%u", host, port);
+	snprintf(url, 40, "tcp://%s:%u", host, port);
+	printf("Connecting to MQTT broker at %s\n", url);
 
 	int rc = MQTTClient_create(&client, url, "sailer", MQTTCLIENT_PERSISTENCE_NONE, NULL);
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
-	
+
 	MQTTClient_connect(client, &conn_opts);
-	MQTTClient_subscribe(client, "knockd/anchor", 0);
-	MQTTClient_message* msg;
+	if (rc != MQTTCLIENT_SUCCESS)
+	{
+		vprintf("Failed to connect MQTT client, return code: %d\n", rc);
+		return NULL;
+	}
+	char *topic = "knockd/anchor";
+	MQTTClient_subscribe(client, topic, 2);
+	MQTTClient_message *msg = NULL;
 	unsigned int sizeSequence = 0;
 
-	char *topic = NULL;
-	int topic_len = 0;
+	int topic_len;
 	printf("Waiting for new sequence...\n");
-	
-	rc = MQTTClient_receive(client, &topic, &topic_len, &msg, 5000);
-	sizeSequence = atoi(msg->payload);
-	int sequence[sizeSequence];
-	for(int i = 0; i < sizeSequence; i++) {
-		rc = MQTTClient_receive(client, &topic, &topic_len, &msg, 5000);
-		if(rc != MQTTCLIENT_SUCCESS || msg == NULL) {
+
+	char *received_topic = NULL;
+	rc = MQTTClient_receive(client, &received_topic, &topic_len, &msg, 5000);
+	if (rc != MQTTCLIENT_SUCCESS || msg == NULL || msg->payload == NULL)
+	{
+		vprint("Failed to receive first message, return code: %d\n", rc);
+		MQTTClient_disconnect(client, 1000);
+		MQTTClient_destroy(&client);
+		return NULL;
+	}
+
+	vprint("Received payload: %s\n", msg->payload);
+
+	sizeSequence = atoi((char *)msg->payload);
+	vprint("Received sequence size: %d\n", sizeSequence);
+	int *sequence = malloc(sizeSequence * sizeof(int));
+	MQTTClient_freeMessage(&msg);
+	if (received_topic)
+	{
+		MQTTClient_free(received_topic);
+		received_topic = NULL;
+	}
+	for (int i = 0; i < sizeSequence; i++)
+	{
+		rc = MQTTClient_receive(client, &received_topic, &topic_len, &msg, 5000);
+		if (rc != MQTTCLIENT_SUCCESS || msg == NULL)
+		{
 			fprintf(stderr, "Failed to receive message, return code: %d\n", rc);
 			MQTTClient_disconnect(client, 1000);
 			MQTTClient_destroy(&client);
+			free(sequence);
 			return NULL;
 		}
-		sequence[i] = atoi(msg->payload);
-		printf("Received port %i: %d\n", i, sequence[i]);
+		sequence[i] = atoi((char *)msg->payload);
+		fprintf(fp, "%d\n", sequence[i]);
+
+		vprint("Received port %i: %d\n", i, sequence[i]);
+		MQTTClient_freeMessage(&msg);
+		if (received_topic)
+		{
+			MQTTClient_free(received_topic);
+			received_topic = NULL;
+		}
 	}
-	printf("Please take note of the sequence and don't share it with anyone.\n");
-	MQTTClient_freeMessage(&msg);
 	MQTTClient_disconnect(client, 1000);
 	MQTTClient_destroy(&client);
-	return &sequence;
+	fprintf(fp, "0\n"); // End of sequence marker
+	fclose(fp);
+	return sequence;
+}
+
+unsigned short *parse_port_sequence()
+{
+	FILE *fp;
+	fp = fopen("seq.conf", "r");
+	if (fp == NULL)
+	{
+		fprintf(stderr, "Failed to open seq.conf for reading\n");
+		return NULL;
+	}
+	unsigned short *sequence = malloc(64 * sizeof(unsigned short));
+	if (sequence == NULL)
+	{
+		fprintf(stderr, "Failed to allocate memory for sequence\n");
+		fclose(fp);
+		return NULL;
+	}
+
+	for (int i = 0; i < 64; i++)
+	{
+		if (fscanf(fp, "%hu", &sequence[i]) != 1)
+		{
+			if (feof(fp))
+			{
+				break;
+			}
+			fprintf(stderr, "Failed to read port from seq.conf\n");
+			free(sequence);
+			fclose(fp);
+			return NULL;
+		}
+	}
+	fclose(fp);
+	return sequence;
+}
+
+char* do_knocking(const char *hostname, unsigned short *sequence)
+{
+	int sd;
+	int result;
+	struct addrinfo hints;
+	struct addrinfo *infoptr;
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = o_ip;
+	char ipname[256];
+	char *ip = malloc(256);
+
+	for (int i = 0; sequence[i] != 0; i++)
+	{
+		vprint("Knocking on port %hu of %s\n", sequence[i], hostname);
+		// Here you would implement the actual knocking logic, e.g., sending packets
+		// to the specified ports. This is a placeholder for demonstration purposes.
+
+		/* get host and port based on hints */
+
+		char portstr[6];
+		snprintf(portstr, sizeof(portstr), "%hu", sequence[i]);
+		result = getaddrinfo(hostname, portstr, &hints, &infoptr);
+		if (result)
+		{
+			fprintf(stderr, "Failed to resolve hostname '%s' on port %hu\n", hostname, sequence[i]);
+			fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(result));
+			exit(1);
+		}
+		/* create socket */
+
+		int flags;
+		sd = socket(infoptr->ai_family, SOCK_STREAM, 0);
+		if (sd == -1)
+		{
+			fprintf(stderr, "Cannot open socket\n");
+			exit(1);
+		}
+		flags = fcntl(sd, F_GETFL, 0);
+		fcntl(sd, F_SETFL, flags | O_NONBLOCK);
+
+		/* extract ip as string (v4 or v6) */
+		getnameinfo(infoptr->ai_addr, infoptr->ai_addrlen, ipname, sizeof(ipname), NULL, 0, NI_NUMERICHOST);
+
+		/* connect or send UDP packet */
+
+		vprint("hitting tcp %s:%hu\n", ipname, sequence[i]);
+		connect(sd, infoptr->ai_addr, infoptr->ai_addrlen);
+
+		close(sd);
+		usleep(1000 * o_delay);
+		freeaddrinfo(infoptr);
+
+		usleep(1000 * o_delay); // Simulate delay between knocks
+	}
+	snprintf(ip, 256, "%s", ipname);
+	return ip; // Return the last IP name used for knocking
 }
 
 /* vim: set ts=2 sw=2 noet: */
