@@ -114,7 +114,7 @@ typedef struct
 	unsigned short sequence[SEQ_MAX];
 	unsigned char anchorTopic[80];
 	unsigned char sailerTopic[80];
-	unsigned short* keySequence;
+	unsigned short *keySequence;
 	unsigned short keySequenceCount;
 	unsigned int MQTT_port;
 	char *pcap_filter_exp;
@@ -170,8 +170,8 @@ int exec_cmd(char *command, char *name);
 void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet);
 int target_strcmp(char *ip, char *target);
 void secondPhaseManager(knocker_t *sealer);
-credential_t* generate_new_credentials();
-unsigned short* receive_sequence();
+credential_t *generate_new_credentials();
+unsigned short *receive_sequence();
 // void register_new_sequence(const unsigned char *command, unsigned short *sequence);
 void generate_new_sequence();
 
@@ -209,7 +209,6 @@ int main(int argc, char **argv)
 	int opt, ret, optidx = 1;
 
 	unsigned int *sequence = NULL;
-
 
 	static struct option opts[] =
 		{
@@ -1202,7 +1201,6 @@ void generate_pcap_filter()
 		if (ipv6 && o_skipIpV6)
 			continue;
 
-
 		for (lp = credentials; lp; lp = lp->next)
 		{
 			cred = (credential_t *)lp->data;
@@ -1272,7 +1270,6 @@ void generate_pcap_filter()
 			{
 				bufsize = realloc_strcat(&buffer, ")", bufsize); /* close parentheses of TCP ports */
 			}
-
 
 			/* append the TCP flag filters */
 			if (tcp_present)
@@ -1352,7 +1349,6 @@ void generate_pcap_filter()
 				bufsize = realloc_strcat(&buffer, ")", bufsize); /* close parentheses of flags */
 			}
 
-
 			/* append filter for all UDP ports (i.e. "(udp dst port 6543 or 6544 or 6545)" */
 			// head_set = 0;
 			// for(i = 0; i < door->seqcount; i++) {
@@ -1414,7 +1410,6 @@ void generate_pcap_filter()
 			buffer[0] = '\0'; /* "clear" the buffer */
 		}
 	}
-
 
 	/* generate the whole pcap filter string if a filter had been modified. Reuse
 	 * buffer (already "cleared").
@@ -1564,7 +1559,7 @@ void close_door(opendoor_t *door)
 void unvalidate_credentials(credential_t *cred)
 {
 	credentials = list_remove(credentials, cred);
-	free(cred->keySequence);
+	free(cred);
 }
 
 /* Get the IP address of an interface
@@ -1970,7 +1965,6 @@ void process_attempt_old(knocker_t *attempt)
 		}
 		else
 		{
-			
 		}
 	}
 }
@@ -1978,40 +1972,41 @@ void process_attempt_old(knocker_t *attempt)
 void process_attempt(knocker_t *attempt)
 {
 
+	vprint("Processing attempt");
 	/* level up! */
 	attempt->stage++;
+	vprint("Stage %d\n", attempt->stage);
+	vprint("src: %s\n", attempt->src);
+
 	if (attempt->srchost)
 	{
-		vprint("%s (%s): %s: Stage %d\n", attempt->src, attempt->srchost, attempt->door->name, attempt->stage);
-		logprint("%s (%s): %s: Stage %d", attempt->src, attempt->srchost, attempt->door->name, attempt->stage);
+		vprint("%s (%s): Stage %d\n", attempt->src, attempt->srchost, attempt->stage);
+		logprint("%s (%s): Stage %d", attempt->src, attempt->srchost,  attempt->stage);
 	}
 	else
 	{
-		vprint("%s: %s: Stage %d\n", attempt->src, attempt->door->name, attempt->stage);
-		logprint("%s: %s: Stage %d", attempt->src, attempt->door->name, attempt->stage);
+		vprint("%s: Stage %d\n", attempt->src,  attempt->stage);
+		logprint("%s: Stage %d", attempt->src, attempt->stage);
 	}
 	int pid;
 	if (attempt->stage >= attempt->cred->keySequenceCount)
 	{
 		if (attempt->srchost)
 		{
-			vprint("%s (%s): %s: OPEN SESAME\n", attempt->src, attempt->srchost, attempt->door->name);
-			logprint("%s (%s): %s: OPEN SESAME", attempt->src, attempt->srchost, attempt->door->name);
+			vprint("%s (%s): OPEN SESAME\n", attempt->src, attempt->srchost);
+			logprint("%s (%s): OPEN SESAME", attempt->src, attempt->srchost);
 		}
 		else
 		{
-			vprint("%s: %s: OPEN SESAME\n", attempt->src, attempt->door->name);
-			logprint("%s: %s: OPEN SESAME", attempt->src, attempt->door->name);
+			vprint("%s: OPEN SESAME\n", attempt->src);
+			logprint("%s: OPEN SESAME", attempt->src);
 		}
 
 		/* run the associated command */
-		if (fork() == 0)
-		{
-			/* child */
-			secondPhaseManager(attempt);
-			vprint("HAPPY XMAS!\n");
-			exit(0); /* exit child */
-		}
+
+		/* child */
+		secondPhaseManager(attempt);
+		vprint("HAPPY XMAS!\n");
 	}
 }
 
@@ -2175,16 +2170,24 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 	lp = attempts;
 	while (lp != NULL)
 	{
+		vprint("checking attempt %s\n", ((knocker_t *)lp->data)->src);
 		int nix = 0; /* Clear flag */
 		PMList *lpnext = lp->next;
 
 		attempt = (knocker_t *)lp->data;
 
+		for (int i = 0; i < attempt->cred->keySequenceCount; i++)
+		{
+
+			vprint("found matching port %d for sequence\n", attempt->cred->keySequence[i]);
+		}
+
 		/* Check if the sequence has been completed */
-		if (attempt->stage >= attempt->door->seqcount)
+		if (attempt->stage >= attempt->cred->keySequenceCount)
 		{
 			dprint("removing successful knock attempt (%s)\n", attempt->src);
 			nix = 1;
+			vprint("removing successful knock attempt (%s)\n", attempt->src);
 		}
 
 		/* Signed integer overflow check.
@@ -2193,31 +2196,32 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 		{
 			dprint("removing failed knock attempt (%s)\n", attempt->src);
 			nix = 1;
+			vprint("removing failed knock attempt (%s)\n", attempt->src);
 		}
 
-		/* Check if timeout has been reached */
-		if (!nix && (pkt_secs - attempt->seq_start) >= attempt->door->seq_timeout)
-		{
-
-			/* Do we know the hostname? */
-			if (attempt->srchost)
-			{
-				/* Log the hostname */
-				vprint("%s (%s): %s: sequence timeout (stage %d)\n", attempt->src, attempt->srchost,
-					   attempt->door->name, attempt->stage);
-				logprint("%s (%s): %s: sequence timeout (stage %d)\n", attempt->src, attempt->srchost,
-						 attempt->door->name, attempt->stage);
-			}
-			else
-			{
-				/* Log the IP */
-				vprint("%s: %s: sequence timeout (stage %d)\n", attempt->src,
-					   attempt->door->name, attempt->stage);
-				logprint("%s: %s: sequence timeout (stage %d)\n", attempt->src,
-						 attempt->door->name, attempt->stage);
-			}
-			nix = 1;
-		}
+		///* Check if timeout has been reached */
+		// if (!nix && (pkt_secs - attempt->seq_start) >= attempt->door->seq_timeout)
+		//{
+		//
+		//	/* Do we know the hostname? */
+		//	if (attempt->srchost)
+		//	{
+		//		/* Log the hostname */
+		//		vprint("%s (%s): %s: sequence timeout (stage %d)\n", attempt->src, attempt->srchost,
+		//			   attempt->door->name, attempt->stage);
+		//		logprint("%s (%s): %s: sequence timeout (stage %d)\n", attempt->src, attempt->srchost,
+		//				 attempt->door->name, attempt->stage);
+		//	}
+		//	else
+		//	{
+		//		/* Log the IP */
+		//		vprint("%s: %s: sequence timeout (stage %d)\n", attempt->src,
+		//			   attempt->door->name, attempt->stage);
+		//		logprint("%s: %s: sequence timeout (stage %d)\n", attempt->src,
+		//				 attempt->door->name, attempt->stage);
+		//	}
+		//	nix = 1;
+		//}
 
 		/* If clear flag is set */
 		if (nix)
@@ -2291,12 +2295,14 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			for (lp = credentials; lp; lp = lp->next)
 			{
 				credential_t *cred = (credential_t *)lp->data;
-				vprint("Hey!");
+
+				vprint("Hey! Size of cred->keySequence: %d\n", cred->keySequenceCount);
 				/* if we're working with TCP, try to match the flags */
 				if (tcp->th_flags & TH_SYN)
 				{
 					tcp_port_tries++;
-					if(tcp_port_tries != 1) continue; // skipping duplicate SYN packets
+					if (tcp_port_tries != 1)
+						continue; // skipping duplicate SYN packets
 				}
 				if (/*ip_proto == door->protocol[0] &&*/ dport == cred->keySequence[0] /*&&
 					!target_strcmp(dst_ip, door->target)*/
@@ -2336,6 +2342,14 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 					attempt->cred = cred;
 					attempts = list_add(attempts, attempt);
 					vprint("Duolingo");
+					if (!attempt->stage)
+					{
+						vprint("Failed to add new attempt to the list");
+					}
+					else
+					{
+						vprint("New attempt added to the list");
+					}
 					process_attempt(attempt);
 				}
 			}
@@ -2418,7 +2432,7 @@ void register_new_sequence(const unsigned char* command, unsigned short* sequenc
 	printf("Registered new sequence!\n");
 }*/
 
-void generate_new_sequence(credential_t* cred)
+void generate_new_sequence(credential_t *cred)
 {
 	// We are going to generate a random name between 4 and 16 for the sequence size
 	printf("Generating new sequence...\n");
@@ -2455,14 +2469,14 @@ void generate_new_sequence(credential_t* cred)
 	}
 	cred->keySequence = sequence;
 	cred->keySequenceCount = size;
+	printf("\nSequence size: %d\n", cred->keySequenceCount);
 }
 
-void send_sequence(credential_t* cred, char *topic, int port, char* sailerIP)
+void send_sequence(credential_t *cred, char *topic, int port, char *sailerIP)
 {
 	// We are going to generate a random name between 4 and 16 for the sequence size
 	char url[40];
 	vprint("Salier IP: %s, Port: %d\n", sailerIP, port);
-
 
 	snprintf(url, sizeof(url), "tcp://%s:%i", sailerIP, port);
 	MQTTClient client;
@@ -2471,14 +2485,12 @@ void send_sequence(credential_t* cred, char *topic, int port, char* sailerIP)
 	if (rc != MQTTCLIENT_SUCCESS)
 		vprint("creation error %i", rc);
 
-
-	char* size_str = malloc(10 * sizeof(char));
+	char *size_str = malloc(10 * sizeof(char));
 	snprintf(size_str, sizeof(size_str), "%d", cred->keySequenceCount);
 
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
 
 	rc = MQTTClient_connect(client, &conn_opts);
-
 
 	if (rc != MQTTCLIENT_SUCCESS)
 		vprint("connection error %i", rc);
@@ -2496,7 +2508,7 @@ void send_sequence(credential_t* cred, char *topic, int port, char* sailerIP)
 		MQTTClient_destroy(&client);
 		return;
 	}
-	char* sequence_str = malloc(6);
+	char *sequence_str = malloc(6);
 	for (int i = 0; i < cred->keySequenceCount; i++)
 	{
 		snprintf(sequence_str, 6, "%hu", cred->keySequence[i]);
@@ -2512,16 +2524,35 @@ void send_sequence(credential_t* cred, char *topic, int port, char* sailerIP)
 			return;
 		}
 	}
+	rc = MQTTClient_publish(client, topic, strlen(cred->anchorTopic), cred->anchorTopic, 2, 0, NULL);
+	MQTTClient_yield();
+	if (rc != MQTTCLIENT_SUCCESS)
+	{
+		vprint("publish error %i", rc);
+		MQTTClient_disconnect(client, 1000);
+		MQTTClient_destroy(&client);
+		return;
+	}
+	rc = MQTTClient_publish(client, topic, strlen(cred->sailerTopic), cred->sailerTopic, 2, 0, NULL);
+	MQTTClient_yield();
+	if (rc != MQTTCLIENT_SUCCESS)
+	{
+		vprint("publish error %i", rc);
+		MQTTClient_disconnect(client, 1000);
+		MQTTClient_destroy(&client);
+		return;
+	}
 }
 
-unsigned short* receive_sequence()
+unsigned short *receive_sequence()
 {
 	MQTTClient client;
 
 	vprint("Receiving seq...");
 
 	unsigned short *toret = malloc(SEQ_MAX * sizeof(unsigned short));
-	if (toret == NULL) {
+	if (toret == NULL)
+	{
 		fprintf(stderr, "Failed to allocate memory for sequence\n");
 		return NULL;
 	}
@@ -2579,14 +2610,19 @@ unsigned short* receive_sequence()
 
 void secondPhaseManager(knocker_t *sealer)
 {
-	unvalidate_credentials(sealer->cred);
-	credential_t* new_cred = generate_new_credentials(sealer->cred);
+	credential_t *new_cred = generate_new_credentials(sealer->cred);
+	vprint("Size of credentials vector: %d\n", list_count(credentials));
+
 	open_mqtt_port(*sealer);
 
 	send_sequence(new_cred, sealer->cred->anchorTopic, sealer->cred->MQTT_port, sealer->src);
-	sleep(1); //Syncing time
+	sleep(1); // Syncing time
+	unvalidate_credentials(sealer->cred);
+	credentials = list_add(credentials, new_cred);
+
 	receive_sequence();
 	close_mqtt_port(*sealer);
+	generate_pcap_filter(); /* update pcap filter */
 }
 
 credential_t *generate_new_credentials()
@@ -2601,13 +2637,15 @@ credential_t *generate_new_credentials()
 	generate_new_sequence(cred);
 	cred->MQTT_port = 1883; // Default MQTT port
 	unsigned char rand_bytes[4];
-	if (RAND_bytes(rand_bytes, sizeof(rand_bytes)) != 1) {
+	if (RAND_bytes(rand_bytes, sizeof(rand_bytes)) != 1)
+	{
 		perror("RAND_bytes");
 		cleanup(1);
 	}
 	unsigned int rand_val = (rand_bytes[0] << 24) | (rand_bytes[1] << 16) | (rand_bytes[2] << 8) | rand_bytes[3];
 	snprintf((char *)cred->anchorTopic, sizeof(cred->anchorTopic), "knockd/%08x", rand_val);
-	if (RAND_bytes(rand_bytes, sizeof(rand_bytes)) != 1) {
+	if (RAND_bytes(rand_bytes, sizeof(rand_bytes)) != 1)
+	{
 		perror("RAND_bytes");
 		cleanup(1);
 	}
@@ -2615,6 +2653,4 @@ credential_t *generate_new_credentials()
 	snprintf((char *)cred->sailerTopic, sizeof(cred->sailerTopic), "knockd/%08x", rand_val);
 
 	return cred;
-	
-
 }

@@ -49,9 +49,10 @@ static char version[] = "0.9";
 void vprint(char *fmt, ...);
 void ver();
 void usage();
-unsigned short *get_new_sequence(char *host, unsigned short port);
-unsigned short *parse_port_sequence();
+void *get_new_sequence(char *host, unsigned short port, char *topic);
+unsigned short *parse_port_sequence(FILE *fp);
 char *do_knocking(const char *hostname, unsigned short *sequence);
+char* read_line(FILE *fp);
 
 int o_verbose = 0;
 int o_udp = 0;
@@ -124,27 +125,31 @@ int main(int argc, char **argv)
 
 	hostname = argv[optind++];
 
-	// TODO: use parsing to get the sequence, and use the arguments as data later
-	unsigned short *sequence = parse_port_sequence();
+	FILE *fp;
+	fp = fopen("seq.conf", "r");
+	if (fp == NULL)
+	{
+		fprintf(stderr, "Failed to open seq.conf for reading\n");
+		exit(1);
+	}
+	unsigned short *sequence = parse_port_sequence(fp);
+	char* anchor_topic =  read_line(fp);
+	char *sailer_topic = read_line(fp);
+	fclose(fp);
 	if (sequence == NULL)
 	{
 		fprintf(stderr, "Failed to parse port sequence\n");
 		exit(1);
 	}
-	for (int i = 0; sequence[i] != 0; i++)
-	{
-		vprint("Parsed port: %hu\n", sequence[i]);
-	}
 
 	ipname = do_knocking(hostname, sequence);
 
-	char *seq = get_new_sequence(ipname, 1883);
+	char *seq = get_new_sequence(ipname, 1883, anchor_topic);
 	if (seq == NULL)
 	{
 		fprintf(stderr, "Failed to get new sequence\n");
 		exit(1);
 	}
-	printf("New sequence: %s\n", seq);
 
 	MQTTClient client;
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
@@ -196,11 +201,16 @@ int main(int argc, char **argv)
 			port = arg;
 		}
 
-		MQTTClient_publish(client, "knockd/sailer", strlen(port), port, 2, 0, NULL);
+		MQTTClient_publish(client, sailer_topic, strlen(port), port, 2, 0, NULL);
 		MQTTClient_yield();
 	}
+	char *end = "END_SEQUENCE";
+	MQTTClient_publish(client, sailer_topic, strlen(end), end, 2, 0, NULL);
+	MQTTClient_yield();
 
-	
+	MQTTClient_disconnect(client, 1000);
+	MQTTClient_destroy(&client);
+	free(url);
 
 	return (0);
 }
@@ -245,7 +255,7 @@ void ver()
 	exit(0);
 }
 
-unsigned short *get_new_sequence(char *host, unsigned short port)
+void *get_new_sequence(char *host, unsigned short port, char *topic)
 {
 	MQTTClient client;
 	FILE *fp;
@@ -269,7 +279,7 @@ unsigned short *get_new_sequence(char *host, unsigned short port)
 		vprintf("Failed to connect MQTT client, return code: %d\n", rc);
 		return NULL;
 	}
-	char *topic = "knockd/anchor";
+
 	MQTTClient_subscribe(client, topic, 2);
 	MQTTClient_message *msg = NULL;
 	unsigned int sizeSequence = 0;
@@ -320,33 +330,54 @@ unsigned short *get_new_sequence(char *host, unsigned short port)
 			received_topic = NULL;
 		}
 	}
+	fprintf(fp, "0\n"); // End of sequence marker
+	rc = MQTTClient_receive(client, &received_topic, &topic_len, &msg, 5000);
+	if (rc != MQTTCLIENT_SUCCESS || msg == NULL || msg->payload == NULL)
+	{
+		fprintf(stderr, "Failed to receive anchor topic, return code: %d\n", rc);
+		free(sequence);
+		MQTTClient_disconnect(client, 1000);
+		MQTTClient_destroy(&client);
+		fclose(fp);
+		return NULL;
+	}
+	fprintf(fp, "%s\n", msg->payload);
+	rc = MQTTClient_receive(client, &received_topic, &topic_len, &msg, 5000);
+	if (rc != MQTTCLIENT_SUCCESS || msg == NULL || msg->payload == NULL)
+	{
+		fprintf(stderr, "Failed to receive sailer topic, return code: %d\n", rc);
+		free(sequence);
+		MQTTClient_disconnect(client, 1000);
+		MQTTClient_destroy(&client);
+		fclose(fp);
+		return NULL;
+	}
+	fprintf(fp, "%s\n", (char *)msg->payload);
 	MQTTClient_disconnect(client, 1000);
 	MQTTClient_destroy(&client);
-	fprintf(fp, "0\n"); // End of sequence marker
 	fclose(fp);
 	return sequence;
 }
 
-unsigned short *parse_port_sequence()
+unsigned short *parse_port_sequence(FILE *fp)
 {
-	FILE *fp;
-	fp = fopen("seq.conf", "r");
 	if (fp == NULL)
 	{
 		fprintf(stderr, "Failed to open seq.conf for reading\n");
 		return NULL;
 	}
-	unsigned short *sequence = malloc(64 * sizeof(unsigned short));
+	unsigned short *sequence = malloc(32 * sizeof(unsigned short));
 	if (sequence == NULL)
 	{
 		fprintf(stderr, "Failed to allocate memory for sequence\n");
-		fclose(fp);
 		return NULL;
 	}
 
-	for (int i = 0; i < 64; i++)
+	short unsigned port;
+
+	for (int i = 0; i < 32; i++)
 	{
-		if (fscanf(fp, "%hu", &sequence[i]) != 1)
+		if (fscanf(fp, "%hu", &port) != 1)
 		{
 			if (feof(fp))
 			{
@@ -354,12 +385,23 @@ unsigned short *parse_port_sequence()
 			}
 			fprintf(stderr, "Failed to read port from seq.conf\n");
 			free(sequence);
-			fclose(fp);
 			return NULL;
 		}
+		if(port == 0)
+		{
+			break;
+		}
+		sequence[i] = port;
+		vprint("Parsed port: %hu\n", sequence[i]);
 	}
-	fclose(fp);
 	return sequence;
+}
+
+char* read_line(FILE *fp)
+{
+	char *line = malloc(256);
+	fscanf(fp, "%s", line);
+	return line;
 }
 
 char* do_knocking(const char *hostname, unsigned short *sequence)
