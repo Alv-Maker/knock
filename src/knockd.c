@@ -1728,16 +1728,18 @@ int open_mqtt_port(knocker_t sealer)
 	int ret;
 	if (sealer.cred->MQTT_port == 0)
 	{
-		vprint("no mqtt port configured for door %s, skipping...\n", sealer.door->name);
+		vprint("no mqtt port configured, skipping...\n");
 		return 0;
 	}
 	// Open the MQTT port
 	char command[100];
-	snprintf(command, sizeof(command), "iptables -A INPUT -p tcp --dport %d -j ACCEPT", sealer.cred->MQTT_port);
+	snprintf(command, sizeof(command), "iptables -A INPUT -p tcp --dport %d -j ACCEPT", 8883);
+	ret = system(command);
+	snprintf(command, sizeof(command), "iptables -A INPUT -i lo -j ACCEPT");
 	ret = system(command);
 	if (ret != 0)
 	{
-		vprint("failed to open mqtt port for door %s, skipping...\n", sealer.door->name);
+		vprint("failed to open mqtt port, skipping...\n");
 		return 1;
 	}
 	return 0;
@@ -1764,16 +1766,17 @@ int close_mqtt_port(knocker_t sealer)
 	int ret;
 	if (sealer.cred->MQTT_port == 0)
 	{
-		vprint("no mqtt port configured for door %s, skipping...\n", sealer.door->name);
+		vprint("no mqtt port configured, skipping...\n");
 		return 0;
 	}
 	// Close the MQTT port
 	char command[100];
-	snprintf(command, sizeof(command), "iptables -D INPUT -p tcp --dport %d -j ACCEPT", sealer.cred->MQTT_port);
+	snprintf(command, sizeof(command), "iptables -D INPUT -p tcp --dport %d -j ACCEPT", 8883);
 	ret = system(command);
+	snprintf(command, sizeof(command), "iptables -D INPUT -i lo -j ACCEPT"); 
 	if (ret != 0)
 	{
-		vprint("failed to close mqtt port for door %s, skipping...\n", sealer.door->name);
+		vprint("failed to close mqtt port, skipping...\n");
 		return 1;
 	}
 	return 0;
