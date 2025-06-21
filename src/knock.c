@@ -49,7 +49,7 @@ static char version[] = "0.9";
 void vprint(char *fmt, ...);
 void ver();
 void usage();
-void *get_new_sequence(char *host, unsigned short port, char *topic);
+void *get_new_sequence(char *host, unsigned int port, char *topic);
 unsigned short *parse_port_sequence(FILE *fp);
 char *do_knocking(const char *hostname, unsigned short *sequence);
 char* read_line(FILE *fp);
@@ -135,6 +135,7 @@ int main(int argc, char **argv)
 	unsigned short *sequence = parse_port_sequence(fp);
 	char* anchor_topic =  read_line(fp);
 	char *sailer_topic = read_line(fp);
+	unsigned int mqtt_port = atoi(read_line(fp));
 	fclose(fp);
 	if (sequence == NULL)
 	{
@@ -144,7 +145,7 @@ int main(int argc, char **argv)
 
 	ipname = do_knocking(hostname, sequence);
 
-	char *seq = get_new_sequence(ipname, 1883, anchor_topic);
+	char *seq = get_new_sequence(ipname, mqtt_port, anchor_topic);
 	if (seq == NULL)
 	{
 		fprintf(stderr, "Failed to get new sequence\n");
@@ -153,10 +154,15 @@ int main(int argc, char **argv)
 
 	MQTTClient client;
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+	MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
+	ssl_opts.trustStore = "ca.crt"; // Path to your CA certificate
+	ssl_opts.enableServerCertAuth = 0; // Disable server certificate authentication
+	ssl_opts.sslVersion = MQTT_SSL_VERSION_TLS_1_2; // Use TLS 1.2
+	conn_opts.ssl = &ssl_opts;
 
 	char *url = malloc(40);
 
-	snprintf(url, 40, "tcp://%s:%d", ipname, 1883);
+	snprintf(url, 40, "ssl://%s:%d", ipname, 8883);
 
 	vprint("Connecting to MQTT broker at %s\n", url);
 
@@ -200,6 +206,8 @@ int main(int argc, char **argv)
 		{
 			port = arg;
 		}
+
+		vprint("Sending old port %s to topic %s\n", port, sailer_topic);
 
 		MQTTClient_publish(client, sailer_topic, strlen(port), port, 2, 0, NULL);
 		MQTTClient_yield();
@@ -255,7 +263,7 @@ void ver()
 	exit(0);
 }
 
-void *get_new_sequence(char *host, unsigned short port, char *topic)
+void *get_new_sequence(char *host, unsigned int port, char *topic)
 {
 	MQTTClient client;
 	FILE *fp;
@@ -267,20 +275,42 @@ void *get_new_sequence(char *host, unsigned short port, char *topic)
 	}
 
 	char url[40];
-	snprintf(url, 40, "tcp://%s:%u", host, port);
-	printf("Connecting to MQTT broker at %s\n", url);
+	snprintf(url, 40, "ssl://%s:%u", host, 8883);
+	printf("Connecting to MQTT broker at %s\n with topic %s\n", url, topic);
 
 	int rc = MQTTClient_create(&client, url, "sailer", MQTTCLIENT_PERSISTENCE_NONE, NULL);
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+	MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
+	ssl_opts.trustStore = "ca.crt"; // Path to your CA certificate
+	ssl_opts.enableServerCertAuth = 0; // Disable server certificate authentication
+	conn_opts.ssl = &ssl_opts;
 
-	MQTTClient_connect(client, &conn_opts);
 	if (rc != MQTTCLIENT_SUCCESS)
 	{
-		vprintf("Failed to connect MQTT client, return code: %d\n", rc);
+		fprintf(stderr, "Failed to create MQTT client, return code: %d\n", rc);
+		fclose(fp);
 		return NULL;
 	}
 
-	MQTTClient_subscribe(client, topic, 2);
+	rc = MQTTClient_connect(client, &conn_opts);
+	if (rc != MQTTCLIENT_SUCCESS)
+	{
+		vprint("Failed to connect MQTT client, return code: %d\n", rc);
+		return NULL;
+	}
+	vprint("Connected to MQTT broker at %s\n", client);
+
+
+	rc = MQTTClient_subscribe(client, topic, 2);
+	if (rc != MQTTCLIENT_SUCCESS)
+	{
+		fprintf(stderr, "Failed to subscribe to topic %s, return code: %d\n", topic, rc);
+		MQTTClient_disconnect(client, 1000);
+		MQTTClient_destroy(&client);
+		fclose(fp);
+		return NULL;
+	}
+
 	MQTTClient_message *msg = NULL;
 	unsigned int sizeSequence = 0;
 
@@ -353,6 +383,17 @@ void *get_new_sequence(char *host, unsigned short port, char *topic)
 		return NULL;
 	}
 	fprintf(fp, "%s\n", (char *)msg->payload);
+	rc = MQTTClient_receive(client, &received_topic, &topic_len, &msg, 5000);
+	if (rc != MQTTCLIENT_SUCCESS || msg == NULL || msg->payload == NULL)
+	{
+		fprintf(stderr, "Failed to receive MQTT port, return code: %d\n", rc);
+		free(sequence);
+		MQTTClient_disconnect(client, 1000);
+		MQTTClient_destroy(&client);
+		fclose(fp);
+		return NULL;
+	}
+	fprintf(fp, "%d\n", msg->payload);
 	MQTTClient_disconnect(client, 1000);
 	MQTTClient_destroy(&client);
 	fclose(fp);

@@ -171,9 +171,10 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet);
 int target_strcmp(char *ip, char *target);
 void secondPhaseManager(knocker_t *sealer);
 credential_t *generate_new_credentials();
-unsigned short *receive_sequence();
+unsigned short *receive_sequence(char *topic, unsigned int port);
 // void register_new_sequence(const unsigned char *command, unsigned short *sequence);
 void generate_new_sequence();
+void search_and_exec(unsigned short *sequence, char* sailerIP);
 
 pcap_t *cap = NULL;
 FILE *logfd = NULL;
@@ -227,16 +228,36 @@ int main(int argc, char **argv)
 
 	printf("knockd %s\n", version);
 
-	credential_t *cred = malloc(sizeof(credential_t));
-	strcpy((char *)cred->anchorTopic, "knockd/anchor");
-	strcpy((char *)cred->sailerTopic, "knockd/sailer");
-	cred->keySequenceCount = 2;
-	cred->keySequence = malloc(sizeof(unsigned short) * 2);
-	cred->keySequence[0] = 1234;
-	cred->keySequence[1] = 4321;
-	cred->MQTT_port = 1883;
+	//credential_t *cred = malloc(sizeof(credential_t));
+	//strcpy((char *)cred->anchorTopic, "knockd/anchor");
+	//strcpy((char *)cred->sailerTopic, "knockd/sailer");
+	//cred->keySequenceCount = 2;
+	//cred->keySequence = malloc(sizeof(unsigned short) * 2);
+	//cred->keySequence[0] = 1234;
+	//cred->keySequence[1] = 4321;
+	//cred->MQTT_port = 1883;
+
+	//credentials = list_add(credentials, cred);
+
+	credential_t* cred = generate_new_credentials();
 
 	credentials = list_add(credentials, cred);
+
+	FILE* seq_file = fopen("seq.conf", "w");
+	if (seq_file == NULL)
+	{
+		perror("Failed to open seq.conf for writing");
+		exit(1);
+	}
+	for(int i = 0; i < cred->keySequenceCount; i++)
+	{
+		fprintf(seq_file, "%hu\n", cred->keySequence[i]);
+	}
+	fprintf(seq_file, "0\n"); // End of sequence marker
+	fprintf(seq_file, "%s\n", cred->anchorTopic);
+	fprintf(seq_file, "%s\n", cred->sailerTopic);
+	fprintf(seq_file, "%d\n", cred->MQTT_port);
+	fclose(seq_file);
 
 	while ((opt = getopt_long(argc, argv, "4vDdli:c:p:g:hV", opts, &optidx)))
 	{
@@ -573,6 +594,8 @@ void reload(int signum)
 	}
 	list_free(doors);
 	doors = NULL;
+
+	list_free(credentials);
 
 	list_free(attempts);
 	attempts = NULL;
@@ -1559,7 +1582,6 @@ void close_door(opendoor_t *door)
 void unvalidate_credentials(credential_t *cred)
 {
 	credentials = list_remove(credentials, cred);
-	free(cred);
 }
 
 /* Get the IP address of an interface
@@ -1721,6 +1743,22 @@ int open_mqtt_port(knocker_t sealer)
 	return 0;
 }
 
+int open_mqtt_port_fwd(knocker_t sealer)
+{
+	int ret;
+	if (sealer.cred->MQTT_port == 0)
+	{
+		vprint("no mqtt port configured for door %s, skipping...\n", sealer.door->name);
+		return 0;
+	}
+	// Open the MQTT port
+	char command[100];
+	snprintf(command, sizeof(command), "iptables -t nat -A PREROUTING -p tcp --dport %d -j REDIRECT --to-port 1883", sealer.cred->MQTT_port);
+	ret = system(command);
+
+	return 0;
+}
+
 int close_mqtt_port(knocker_t sealer)
 {
 	int ret;
@@ -1732,6 +1770,32 @@ int close_mqtt_port(knocker_t sealer)
 	// Close the MQTT port
 	char command[100];
 	snprintf(command, sizeof(command), "iptables -D INPUT -p tcp --dport %d -j ACCEPT", sealer.cred->MQTT_port);
+	ret = system(command);
+	if (ret != 0)
+	{
+		vprint("failed to close mqtt port for door %s, skipping...\n", sealer.door->name);
+		return 1;
+	}
+	return 0;
+}
+
+int close_mqtt_port_fwd(knocker_t sealer)
+{
+	int ret;
+	if (sealer.cred->MQTT_port == 0)
+	{
+		vprint("no mqtt port configured for door %s, skipping...\n", sealer.door->name);
+		return 0;
+	}
+	// Close the MQTT port
+	char command[100];
+	snprintf(command, sizeof(command), "iptables -t nat -D OUTPUT -p tcp --dport %d -j REDIRECT --to-port 1883", sealer.cred->MQTT_port);
+	ret = system(command);
+	snprintf(command, sizeof(command), "iptables -t nat -D PREROUTING -p tcp --dport %d -j REDIRECT --to-port 1883", sealer.cred->MQTT_port);
+	ret = system(command);
+	snprintf(command, sizeof(command), "iptables -t nat -D OUTPUT -p tcp --sport 1883 -j REDIRECT --to-port %d", sealer.cred->MQTT_port);
+	ret = system(command);
+	snprintf(command, sizeof(command), "iptables -t nat -D PREROUTING -p tcp --sport 1883 -j REDIRECT --to-port %d", sealer.cred->MQTT_port);
 	ret = system(command);
 	if (ret != 0)
 	{
@@ -1972,11 +2036,8 @@ void process_attempt_old(knocker_t *attempt)
 void process_attempt(knocker_t *attempt)
 {
 
-	vprint("Processing attempt");
 	/* level up! */
 	attempt->stage++;
-	vprint("Stage %d\n", attempt->stage);
-	vprint("src: %s\n", attempt->src);
 
 	if (attempt->srchost)
 	{
@@ -2170,17 +2231,11 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 	lp = attempts;
 	while (lp != NULL)
 	{
-		vprint("checking attempt %s\n", ((knocker_t *)lp->data)->src);
 		int nix = 0; /* Clear flag */
 		PMList *lpnext = lp->next;
 
 		attempt = (knocker_t *)lp->data;
 
-		for (int i = 0; i < attempt->cred->keySequenceCount; i++)
-		{
-
-			vprint("found matching port %d for sequence\n", attempt->cred->keySequence[i]);
-		}
 
 		/* Check if the sequence has been completed */
 		if (attempt->stage >= attempt->cred->keySequenceCount)
@@ -2226,6 +2281,7 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 		/* If clear flag is set */
 		if (nix)
 		{
+			free(attempt->cred);
 			/* splice this entry out of the list */
 			if (lp->prev)
 				lp->prev->next = lp->next;
@@ -2262,7 +2318,6 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 		found_attempts = list_add(found_attempts, NULL);
 	}
 
-	// TODO: change door to MQTT door
 	for (found_attempt = found_attempts; found_attempt != NULL; found_attempt = found_attempt->next)
 	{
 		attempt = (knocker_t *)found_attempt->data;
@@ -2270,7 +2325,6 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 
 		if (attempt)
 		{
-			vprint("Attempt founded");
 			// int flagsmatch = flags_match(attempt->door, ip_proto, tcp);
 			if (/*flagsmatch && ip_proto == attempt->door->protocol[attempt->stage] &&*/
 				dport == attempt->cred->keySequence[attempt->stage])
@@ -2296,7 +2350,6 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			{
 				credential_t *cred = (credential_t *)lp->data;
 
-				vprint("Hey! Size of cred->keySequence: %d\n", cred->keySequenceCount);
 				/* if we're working with TCP, try to match the flags */
 				if (tcp->th_flags & TH_SYN)
 				{
@@ -2341,7 +2394,6 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 					attempt->seq_start = pkt_secs;
 					attempt->cred = cred;
 					attempts = list_add(attempts, attempt);
-					vprint("Duolingo");
 					if (!attempt->stage)
 					{
 						vprint("Failed to add new attempt to the list");
@@ -2457,7 +2509,7 @@ void generate_new_sequence(credential_t *cred)
 			perror("RAND_bytes");
 			cleanup(1);
 		}
-		unsigned short num = 1024 + (buf[0] << 8 | buf[1]) % (65535 - 1024 + 1);
+		unsigned short num = 10000 + ((buf[0] << 8) | buf[1]) % (65535 - 10000 + 1);
 		sequence[i] = num;
 	}
 	printf("Generated sequence!\n");
@@ -2472,13 +2524,13 @@ void generate_new_sequence(credential_t *cred)
 	printf("\nSequence size: %d\n", cred->keySequenceCount);
 }
 
-void send_sequence(credential_t *cred, char *topic, int port, char *sailerIP)
+//ERROR: here is the anchor IP
+void send_sequence(credential_t *cred, char *topic, unsigned int port, char *sailerIP)
 {
 	// We are going to generate a random name between 4 and 16 for the sequence size
 	char url[40];
-	vprint("Salier IP: %s, Port: %d\n", sailerIP, port);
 
-	snprintf(url, sizeof(url), "tcp://%s:%i", sailerIP, port);
+	snprintf(url, sizeof(url), "ssl://127.0.0.1:%i", 8883);
 	MQTTClient client;
 	int rc = MQTTClient_create(&client, url, "Anchor", MQTTCLIENT_PERSISTENCE_NONE, NULL);
 
@@ -2489,6 +2541,12 @@ void send_sequence(credential_t *cred, char *topic, int port, char *sailerIP)
 	snprintf(size_str, sizeof(size_str), "%d", cred->keySequenceCount);
 
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+
+	MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
+	ssl_opts.trustStore = "ca.crt"; // Path to your CA certificate
+	ssl_opts.enableServerCertAuth = 0; // Disable server certificate authentication
+	ssl_opts.sslVersion = MQTT_SSL_VERSION_TLS_1_2; // Use TLS 1.2
+	conn_opts.ssl = &ssl_opts;
 
 	rc = MQTTClient_connect(client, &conn_opts);
 
@@ -2512,7 +2570,6 @@ void send_sequence(credential_t *cred, char *topic, int port, char *sailerIP)
 	for (int i = 0; i < cred->keySequenceCount; i++)
 	{
 		snprintf(sequence_str, 6, "%hu", cred->keySequence[i]);
-		vprint("Publishing %s to topic %s\n", sequence_str, topic);
 		rc = MQTTClient_publish(client, topic, strlen(sequence_str), sequence_str, 2, 0, NULL);
 		MQTTClient_yield();
 		vprint("Published %s to topic %s\n", sequence_str, topic);
@@ -2542,9 +2599,20 @@ void send_sequence(credential_t *cred, char *topic, int port, char *sailerIP)
 		MQTTClient_destroy(&client);
 		return;
 	}
+	char *port_str = malloc(6);
+	snprintf(port_str, 6, "%hu", port);
+	vprint("Publishing port %s to topic %s\n", port_str, topic);
+	rc = MQTTClient_publish(client, topic, strlen(port_str), port_str, 2, 0, NULL);
+	if (rc != MQTTCLIENT_SUCCESS)
+	{
+		vprint("publish error %i", rc);
+		MQTTClient_disconnect(client, 1000);
+		MQTTClient_destroy(&client);
+		return;
+	}
 }
 
-unsigned short *receive_sequence()
+unsigned short *receive_sequence(char *topic, unsigned int port)
 {
 	MQTTClient client;
 
@@ -2557,7 +2625,11 @@ unsigned short *receive_sequence()
 		return NULL;
 	}
 
-	int rc = MQTTClient_create(&client, "tcp://localhost:1883", "KnockKnock", MQTTCLIENT_PERSISTENCE_NONE, NULL);
+	char url[40];
+	snprintf(url, sizeof(url), "ssl://%s:%u", "127.0.0.1", 8883);
+	vprint("Connecting to MQTT broker at %s with topic %s\n", url, topic);
+
+	int rc = MQTTClient_create(&client, url, "KnockKnock", MQTTCLIENT_PERSISTENCE_NONE, NULL);
 	if (rc != MQTTCLIENT_SUCCESS)
 	{
 		fprintf(stderr, "Failed to create MQTT client, return code: %d\n", rc);
@@ -2565,6 +2637,12 @@ unsigned short *receive_sequence()
 	}
 
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+	MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
+	ssl_opts.trustStore = "ca.crt"; // Path to your CA certificate
+	ssl_opts.enableServerCertAuth = 0; // Disable server certificate authentication
+	ssl_opts.sslVersion = MQTT_SSL_VERSION_TLS_1_2; // Use TLS 1.2
+	conn_opts.ssl = &ssl_opts;
+
 	rc = MQTTClient_connect(client, &conn_opts);
 	if (rc != MQTTCLIENT_SUCCESS)
 	{
@@ -2573,7 +2651,14 @@ unsigned short *receive_sequence()
 		return NULL;
 	}
 
-	MQTTClient_subscribe(client, "knockd/sailer", 2);
+	rc = MQTTClient_subscribe(client, topic, 2);
+	if (rc != MQTTCLIENT_SUCCESS)
+	{
+		fprintf(stderr, "Failed to subscribe to topic %s, return code: %d\n", topic, rc);
+		MQTTClient_disconnect(client, 1000);
+		MQTTClient_destroy(&client);
+		return NULL;
+	}
 
 	MQTTClient_message *message = NULL;
 	char *topicName = NULL;
@@ -2617,10 +2702,16 @@ void secondPhaseManager(knocker_t *sealer)
 
 	send_sequence(new_cred, sealer->cred->anchorTopic, sealer->cred->MQTT_port, sealer->src);
 	sleep(1); // Syncing time
+	
+
+	unsigned short *received_sequence = receive_sequence(sealer->cred->sailerTopic, sealer->cred->MQTT_port);
+	if(fork() == 0) {
+		search_and_exec(received_sequence, sealer->src);
+		exit(0);
+	}
+		
 	unvalidate_credentials(sealer->cred);
 	credentials = list_add(credentials, new_cred);
-
-	receive_sequence();
 	close_mqtt_port(*sealer);
 	generate_pcap_filter(); /* update pcap filter */
 }
@@ -2635,8 +2726,14 @@ credential_t *generate_new_credentials()
 		cleanup(1);
 	}
 	generate_new_sequence(cred);
-	cred->MQTT_port = 1883; // Default MQTT port
-	unsigned char rand_bytes[4];
+		unsigned char rand_bytes[4];
+
+	if (RAND_bytes(rand_bytes, sizeof(rand_bytes)) != 1)
+	{
+		perror("RAND_bytes");
+		cleanup(1);
+	}
+	cred->MQTT_port = 1024 + (rand_bytes[0] << 8 | rand_bytes[1]) % (9999 - 1024 + 1);
 	if (RAND_bytes(rand_bytes, sizeof(rand_bytes)) != 1)
 	{
 		perror("RAND_bytes");
@@ -2653,4 +2750,46 @@ credential_t *generate_new_credentials()
 	snprintf((char *)cred->sailerTopic, sizeof(cred->sailerTopic), "knockd/%08x", rand_val);
 
 	return cred;
+}
+
+void search_and_exec(unsigned short *sequence, char* sailerIP)
+{
+	vprint("Searching for sequence...\n");
+	PMList *lp;
+	int found = 0;
+	for (lp = doors; lp; lp = lp->next)
+	{
+		opendoor_t *door = (opendoor_t *)lp->data;
+		if (door->one_time_sequences_fd)
+		{
+			vprint("Door %s has one-time sequences, skipping...\n", door->name);
+			continue;
+		}
+		found = 1; // Assume we found the sequence
+		vprint("Checking door %s\n", door->name);
+		for (int i = 0; i < door->seqcount; i++)
+		{
+			if (door->sequence[i] != sequence[i])
+			{
+				found = 0;
+				break;
+			}
+		}
+		if (found)
+		{
+			//TODO: parse the command and execute it after, if not %IP% and other rules doesn't work
+			vprint("Found matching sequence for door %s\n", door->name);
+			char parsed_cmd[PATH_MAX];
+			parse_cmd(parsed_cmd, sizeof(parsed_cmd), door->start_command, sailerIP);
+			exec_cmd(parsed_cmd, door->name);
+			if(door->stop_command)
+			{
+				char parsed_stop_cmd[PATH_MAX];
+				parse_cmd(parsed_stop_cmd, sizeof(parsed_stop_cmd), door->stop_command, sailerIP);
+				sleep(door->cmd_timeout);
+				exec_cmd(parsed_stop_cmd, door->name);
+			}
+			return;
+		}
+	}
 }
