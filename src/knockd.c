@@ -1773,7 +1773,8 @@ int close_mqtt_port(knocker_t sealer)
 	char command[100];
 	snprintf(command, sizeof(command), "iptables -D INPUT -p tcp --dport %d -j ACCEPT", 8883);
 	ret = system(command);
-	snprintf(command, sizeof(command), "iptables -D INPUT -i lo -j ACCEPT"); 
+	snprintf(command, sizeof(command), "iptables -D INPUT -i lo -j ACCEPT");
+	ret = system(command); 
 	if (ret != 0)
 	{
 		vprint("failed to close mqtt port, skipping...\n");
