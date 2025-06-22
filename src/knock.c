@@ -2,6 +2,7 @@
  *  knock.c
  *
  *  Copyright (c) 2004-2012 by Judd Vinet <jvinet@zeroflux.org>
+ *  Copyright (C) 2025 Alberto Novoa Gonzalez <angonzalez22@esei.uvigo.es>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -161,8 +162,17 @@ int main(int argc, char **argv)
 	conn_opts.ssl = &ssl_opts;
 
 	char *url = malloc(40);
+	
+	int is_ipv6 = strchr(ipname, ':') != NULL;
+	if (is_ipv6) {
+		vprint("Detected IPv6 address: %s\n", ipname);
+		snprintf(url, 40, "ssl://[%s]:%d", ipname, 8883);
+	} else {
+		vprint("Detected IPv4 address: %s\n", ipname);
+		snprintf(url, 40, "ssl://%s:%d", ipname, 8883);
+	}
 
-	snprintf(url, 40, "ssl://%s:%d", ipname, 8883);
+	//snprintf(url, 40, "ssl://%s:%d", ipname, 8883);
 
 	vprint("Connecting to MQTT broker at %s\n", url);
 
@@ -275,7 +285,15 @@ void *get_new_sequence(char *host, unsigned int port, char *topic)
 	}
 
 	char url[40];
-	snprintf(url, 40, "ssl://%s:%u", host, 8883);
+	int is_ipv6 = strchr(host, ':') != NULL;
+	if (is_ipv6) {
+		vprint("Detected IPv6 address: %s\n", host);
+		snprintf(url, 40, "ssl://[%s]:%d", host, 8883);
+	} else {
+		vprint("Detected IPv4 address: %s\n", host);
+		snprintf(url, 40, "ssl://%s:%d", host, 8883);
+	}
+	//snprintf(url, 40, "ssl://%s:%u", host, 8883);
 	printf("Connecting to MQTT broker at %s\n with topic %s\n", url, topic);
 
 	int rc = MQTTClient_create(&client, url, "sailer", MQTTCLIENT_PERSISTENCE_NONE, NULL);

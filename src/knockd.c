@@ -2,6 +2,7 @@
  *  knockd.c
  *
  *  Copyright (c) 2004-2012 by Judd Vinet <jvinet@zeroflux.org>
+ *  Copyright (C) 2025 Alberto Novoa Gonzalez <angonzalez22@esei.uvigo.es>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -25,10 +26,6 @@
  */
 #define daemon deprecated_in_osx_10_5_and_up
 #endif
-
-#define MQTT_PORT 1883
-#define MQTT_open_comand "/usr/sbin/iptables -A INPUT -s %IP% -p tcp --dport 1883 -j ACCEPT"
-#define MQTT_close_comand "/usr/sbin/iptables -A INPUT -s %IP% -p tcp --dport 1883 -j ACCEPT"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -156,10 +153,6 @@ char *trim(char *str);
 void runCommand(char *cmd);
 int parseconfig(char *configfile);
 int parse_port_sequence(char *sequence, opendoor_t *door);
-int get_new_one_time_sequence(opendoor_t *door);
-long get_next_one_time_sequence(opendoor_t *door);
-int disable_used_one_time_sequence(opendoor_t *door);
-long get_current_one_time_sequence_position(opendoor_t *door);
 void generate_pcap_filter();
 size_t realloc_strcat(char **dest, const char *src, size_t size);
 void free_door(opendoor_t *door);
@@ -877,16 +870,6 @@ int parseconfig(char *configfile)
 							perror(ptr);
 							return (1);
 						}
-						dprint("config: %s: one time sequences file: %s\n", door->name, ptr);
-						if (get_new_one_time_sequence(door) == 0)
-						{
-							dprint_sequence(door, "config: %s: sequence: ", door->name);
-						}
-						else
-						{ /* no more sequences left in the one time sequences file */
-							dprint("config: no more sequences left in the one time sequences file %s\n", ptr);
-							return (1);
-						}
 					}
 					else if (!strcmp(key, "SEQ_TIMEOUT") || !strcmp(key, "TIMEOUT"))
 					{
@@ -1085,106 +1068,8 @@ int parse_port_sequence(char *sequence, opendoor_t *door)
 	return (0);
 }
 
-/* Read a new sequence from the one time sequences file and update the door.
- */
-int get_new_one_time_sequence(opendoor_t *door)
-{
-	rewind(door->one_time_sequences_fd);
-	if (get_next_one_time_sequence(door) < 0)
-	{
-		/* disable the door by removing it from the doors list if there are no sequences anymore */
-		fprintf(stderr, "no more sequences left in the one time sequences file for door %s --> disabling the door\n", door->name);
-		logprint("no more sequences left in the one time sequences file for door %s --> disabling the door\n", door->name);
-		close_door(door);
-		return (1);
-	}
-	dprint_sequence(door, "new sequence for door %s: ", door->name);
 
-	return (0);
-}
 
-/* Search from the current position in the one time sequence file for the next
- * valid sequence and insert it into the door structure. Returns the position of
- * the beginning of the found line within the file or a negative value if no
- * valid sequence has been found.
- */
-long get_next_one_time_sequence(opendoor_t *door)
-{
-	char line[PATH_MAX + 1];
-	int pos;
-
-	pos = ftell(door->one_time_sequences_fd);
-	while (fgets(line, PATH_MAX, door->one_time_sequences_fd))
-	{
-		trim(line);
-		if (strlen(line) == 0 || line[0] == '#')
-		{
-			pos = ftell(door->one_time_sequences_fd);
-			continue;
-		}
-		if (parse_port_sequence(line, door) > 0)
-		{
-			/* continue searching if parse_port_sequnce returned with an error */
-			continue;
-		}
-		return (pos);
-	}
-	/* no valid line found */
-	return (-1);
-}
-
-/* Remove a one time sequence from the corresponding file (after a successful
- * knock attempt)
- */
-int disable_used_one_time_sequence(opendoor_t *door)
-{
-	long pos = get_current_one_time_sequence_position(door);
-	if (pos >= 0)
-	{
-		if (fseek(door->one_time_sequences_fd, pos, SEEK_SET) < 0)
-		{
-			fprintf(stderr, "error while disabling used one time sequence for door %s --> disabling the door\n", door->name);
-			logprint("error while disabling used one time sequence for door %s --> disabling the door\n", door->name);
-			close_door(door);
-			return (1);
-		}
-		if (fputc('#', door->one_time_sequences_fd) == EOF)
-		{
-			fprintf(stderr, "error while disabling used one time sequence for door %s --> disabling the door\n", door->name);
-			logprint("error while disabling used one time sequence for door %s --> disabling the door\n", door->name);
-			close_door(door);
-			return (1);
-		}
-	}
-	return (0);
-}
-
-/* Get the position (beginning of line) in the one time sequence file of the
- * current sequence such that we know where to insert a '#' to disable the
- * sequence in the one time sequence file
- */
-long get_current_one_time_sequence_position(opendoor_t *door)
-{
-	opendoor_t pseudo_door; /* used to compare sequences in the file and the current sequence in door */
-	long pos;
-
-	rewind(door->one_time_sequences_fd);
-	pseudo_door.one_time_sequences_fd = door->one_time_sequences_fd;
-
-	pos = get_next_one_time_sequence(&pseudo_door);
-	while (pos >= 0)
-	{
-		if (door->seqcount == pseudo_door.seqcount)
-		{
-			if ((memcmp((void *)door->sequence, (void *)pseudo_door.sequence, door->seqcount) == 0) && (memcmp((void *)door->protocol, (void *)pseudo_door.protocol, door->seqcount) == 0))
-			{
-				return (pos);
-			}
-		}
-		pos = get_next_one_time_sequence(&pseudo_door);
-	}
-	return (-1);
-}
 
 /* Generate and set the filter for pcap. That way only the relevant packets will
  * be forwarded to us (in sniff()). Note that generate_pcap_filter() will first
@@ -1254,8 +1139,8 @@ void generate_pcap_filter()
 			/* accept only incoming packets */
 			for (myip = myips; myip != NULL; myip = myip->next)
 			{
-				if (myip->is_ipv6 != ipv6)
-					continue;
+				//if (myip->is_ipv6 != ipv6)
+				//	continue;
 				if (!head_set)
 				{
 					bufsize = realloc_strcat(&buffer, "((dst host ", bufsize);
@@ -1297,102 +1182,9 @@ void generate_pcap_filter()
 			/* append the TCP flag filters */
 			if (tcp_present)
 			{
-				/*if(door->flag_fin != DONT_CARE) {
-					if(ipv6)
-						bufsize = realloc_strcat(&buffer, " and ip6[13+40] & tcp-fin ", bufsize);//using directly mask as pcap didn't yet support flags for IPv6
-					else
-						bufsize = realloc_strcat(&buffer, " and tcp[tcpflags] & tcp-fin ", bufsize);
-					if(door->flag_fin == SET) {
-						bufsize = realloc_strcat(&buffer, "!= 0", bufsize);
-					}
-					if(door->flag_fin == NOT_SET) {
-						bufsize = realloc_strcat(&buffer, "== 0", bufsize);
-					}
-				}
-				if(door->flag_syn != DONT_CARE) {
-					if(ipv6)
-						bufsize = realloc_strcat(&buffer, " and ip6[13+40] & tcp-syn ", bufsize);//using directly mask as pcap didn't yet support flags for IPv6
-					else
-						bufsize = realloc_strcat(&buffer, " and tcp[tcpflags] & tcp-syn ", bufsize);
-					if(door->flag_syn == SET) {
-						bufsize = realloc_strcat(&buffer, "!= 0", bufsize);
-					}
-					if(door->flag_syn == NOT_SET) {
-						bufsize = realloc_strcat(&buffer, "== 0", bufsize);
-					}
-				}
-				if(door->flag_rst != DONT_CARE) {
-					if(ipv6)
-						bufsize = realloc_strcat(&buffer, " and ip6[13+40] & tcp-rst ", bufsize);//using directly mask as pcap didn't yet support flags for IPv6
-					else
-						bufsize = realloc_strcat(&buffer, " and tcp[tcpflags] & tcp-rst ", bufsize);
-					if(door->flag_rst == SET) {
-						bufsize = realloc_strcat(&buffer, "!= 0", bufsize);
-					}
-					if(door->flag_rst == NOT_SET) {
-						bufsize = realloc_strcat(&buffer, "== 0", bufsize);
-					}
-				}
-				if(door->flag_psh != DONT_CARE) {
-					if(ipv6)
-						bufsize = realloc_strcat(&buffer, " and ip6[13+40] & tcp-push ", bufsize);//using directly mask as pcap didn't yet support flags for IPv6
-					else
-						bufsize = realloc_strcat(&buffer, " and tcp[tcpflags] & tcp-push ", bufsize);
-					if(door->flag_psh == SET) {
-						bufsize = realloc_strcat(&buffer, "!= 0", bufsize);
-					}
-					if(door->flag_psh == NOT_SET) {
-						bufsize = realloc_strcat(&buffer, "== 0", bufsize);
-					}
-				}
-				if(door->flag_ack != DONT_CARE) {
-					if(ipv6)
-						bufsize = realloc_strcat(&buffer, " and ip6[13+40] & tcp-ack ", bufsize);//using directly mask as pcap didn't yet support flags for IPv6
-					else
-						bufsize = realloc_strcat(&buffer, " and tcp[tcpflags] & tcp-ack ", bufsize);
-					if(door->flag_ack == SET) {
-						bufsize = realloc_strcat(&buffer, "!= 0", bufsize);
-					}
-					if(door->flag_ack == NOT_SET) {
-						bufsize = realloc_strcat(&buffer, "== 0", bufsize);
-					}
-				}
-				if(door->flag_urg != DONT_CARE) {
-					if(ipv6)
-						bufsize = realloc_strcat(&buffer, " and ip6[13+40] & tcp-urg ", bufsize);//using directly mask as pcap didn't yet support flags for IPv6
-					else
-						bufsize = realloc_strcat(&buffer, " and tcp[tcpflags] & tcp-urg ", bufsize);
-					if(door->flag_urg == SET) {
-						bufsize = realloc_strcat(&buffer, "!= 0", bufsize);
-					}
-					if(door->flag_urg == NOT_SET) {
-						bufsize = realloc_strcat(&buffer, "== 0", bufsize);
-					}
-				}*/
 				bufsize = realloc_strcat(&buffer, ")", bufsize); /* close parentheses of flags */
 			}
 
-			/* append filter for all UDP ports (i.e. "(udp dst port 6543 or 6544 or 6545)" */
-			// head_set = 0;
-			// for(i = 0; i < door->seqcount; i++) {
-			//	if(door->protocol[i] == IPPROTO_UDP) {
-			//		if(!head_set) {		/* first UDP port in the sequence */
-			//			if(tcp_present) {
-			//				bufsize = realloc_strcat(&buffer, " or ", bufsize);
-			//			}
-			//			bufsize = realloc_strcat(&buffer, "(udp dst port ", bufsize);
-			//			head_set = 1;
-			//			udp_present = 1;
-			//		} else {		/* not the first UDP port in the sequence */
-			//			bufsize = realloc_strcat(&buffer, " or ", bufsize);
-			//		}
-			//		snprintf(port_str, sizeof(port_str), "%hu", door->sequence[i]);		/* unsigned short to string */
-			//		bufsize = realloc_strcat(&buffer, port_str, bufsize);			/* append port number */
-			//	}
-			// }
-			// if(udp_present) {
-			//	bufsize = realloc_strcat(&buffer, ")", bufsize);		/* close parentheses of UDP ports */
-			// }
 
 			bufsize = realloc_strcat(&buffer, "))", bufsize); /* close parantheses around port filters */
 
@@ -1907,135 +1699,7 @@ int flags_match(opendoor_t *door, int ip_proto, struct tcphdr *tcp)
  * sequence. If they've completed all sequences correctly, then we open the
  * door.
  */
-void process_attempt_old(knocker_t *attempt)
-{
-	// select
-	char *start_command;
-	char *stop_command;
 
-	// select
-	if (attempt->from_ipv6)
-	{
-		start_command = attempt->door->start_command6;
-		stop_command = attempt->door->stop_command6;
-
-		// make default fallback to same than ipv4 if v6 command is not set.
-		if (start_command == NULL)
-		{
-			start_command = attempt->door->start_command;
-		}
-		if (stop_command == NULL)
-		{
-			stop_command = attempt->door->stop_command;
-		}
-	}
-	else
-	{
-		start_command = attempt->door->start_command;
-		stop_command = attempt->door->stop_command;
-	}
-
-	/* level up! */
-	attempt->stage++;
-	if (attempt->srchost)
-	{
-		vprint("%s (%s): %s: Stage %d\n", attempt->src, attempt->srchost, attempt->door->name, attempt->stage);
-		logprint("%s (%s): %s: Stage %d", attempt->src, attempt->srchost, attempt->door->name, attempt->stage);
-	}
-	else
-	{
-		vprint("%s: %s: Stage %d\n", attempt->src, attempt->door->name, attempt->stage);
-		logprint("%s: %s: Stage %d", attempt->src, attempt->door->name, attempt->stage);
-	}
-	if (attempt->stage >= attempt->cred->keySequenceCount)
-	{
-		if (attempt->srchost)
-		{
-			vprint("%s (%s): %s: OPEN SESAME\n", attempt->src, attempt->srchost, attempt->door->name);
-			logprint("%s (%s): %s: OPEN SESAME", attempt->src, attempt->srchost, attempt->door->name);
-		}
-		else
-		{
-			vprint("%s: %s: OPEN SESAME\n", attempt->src, attempt->door->name);
-			logprint("%s: %s: OPEN SESAME", attempt->src, attempt->door->name);
-		}
-		if (start_command && strlen(start_command))
-		{
-			/* run the associated command */
-			if (fork() == 0)
-			{
-				/* child */
-				char parsed_start_cmd[PATH_MAX];
-				char parsed_stop_cmd[PATH_MAX];
-				size_t cmd_len = 0;
-
-				setsid();
-
-				/* parse start and stop command and check if the parsed commands fit in the given buffer. Don't
-				 * execute any command if one of them has been truncated */
-				cmd_len = parse_cmd(parsed_start_cmd, sizeof(parsed_start_cmd), start_command, attempt->src);
-				if (cmd_len >= sizeof(parsed_start_cmd))
-				{ /* command has been truncated --> do NOT execute it */
-					fprintf(stderr, "error: parsed start command has been truncated! --> won't execute it\n");
-					logprint("error: parsed start command has been truncated! --> won't execute it");
-					exit(0); /* exit child */
-				}
-				if (stop_command)
-				{
-					cmd_len = parse_cmd(parsed_stop_cmd, sizeof(parsed_stop_cmd), stop_command, attempt->src);
-					if (cmd_len >= sizeof(parsed_stop_cmd))
-					{ /* command has been truncated --> do NOT execute it */
-						fprintf(stderr, "error: parsed stop command has been truncated! --> won't execute start command\n");
-						logprint("error: parsed stop command has been truncated! --> won't execute start command");
-						exit(0); /* exit child */
-					}
-				}
-
-				/* all parsing ok --> execute the parsed (%IP% = source IP) command */
-				exec_cmd(parsed_start_cmd, attempt->door->name);
-				open_mqtt_port(*attempt); /* open the MQTT port if configured */
-				/* if stop_command is set, sleep for cmd_timeout and run it*/
-				if (stop_command)
-				{
-					sleep(attempt->door->cmd_timeout);
-					if (attempt->srchost)
-					{
-						vprint("%s (%s): %s: command timeout\n", attempt->src, attempt->srchost, attempt->door->name);
-						logprint("%s (%s): %s: command timeout", attempt->src, attempt->srchost, attempt->door->name);
-					}
-					else
-					{
-						vprint("%s: %s: command timeout\n", attempt->src, attempt->door->name);
-						logprint("%s: %s: command timeout", attempt->src, attempt->door->name);
-					}
-					exec_cmd(parsed_stop_cmd, attempt->door->name);
-				}
-
-				exit(0); /* exit child */
-			}
-		}
-		/* change to next sequence if one time sequences are used.
-		 * Note that here the door will eventually be closed in
-		 * get_new_one_time_sequence() if no more sequences are left */
-		if (attempt->door->one_time_sequences_fd)
-		{
-			if (disable_used_one_time_sequence(attempt->door))
-			{
-				return;
-			}
-
-			get_new_one_time_sequence(attempt->door);
-
-			/* update pcap filter */
-			free(attempt->door->pcap_filter_exp);
-			attempt->door->pcap_filter_exp = NULL;
-			generate_pcap_filter();
-		}
-		else
-		{
-		}
-	}
-}
 
 void process_attempt(knocker_t *attempt)
 {
@@ -2437,56 +2101,7 @@ int target_strcmp(char *ip, char *target)
 	return 1;
 }
 
-/* vim: set ts=2 sw=2 noet:
-
-void register_new_sequence(const unsigned char* command, unsigned short* sequence){
-	printf("Registering new sequence...\n");
-
-	unsigned char filename[SHA_DIGEST_LENGTH * 2 + 1]; // 64 bytes for the filename
-	unsigned char hash[SHA_DIGEST_LENGTH]; // SHA1 hash length
-	SHA1(command, strlen(command), hash); // Generate a unique filename based on the command
-	for (int i = 0; i < SHA_DIGEST_LENGTH * 2; i+=2)
-	{
-		sprintf((filename + i), "%02x", hash[i]);
-	}
-	filename[SHA_DIGEST_LENGTH * 2] = '\0';
-	 // Convert the long integer back to a string
-	printf("Filename: %s\n", filename);
-	char *content;
-
-	// Converting the sequence to a string
-	for (int i = 0; i < sizeof(sequence) / sizeof(sequence[0]); i++) {
-		char* buffer = (char*)malloc(6*sizeof(char)); // 5 digits + null terminator
-		sprintf(buffer, "%hu", sequence[i]);
-		if (i == 0) {
-			content = buffer; // First element, no comma needed
-		} else {
-			content = realloc(content, strlen(content) + strlen(buffer) + 2); // +2 for comma and null terminator
-			strcat(content, ",");
-			strcat(content, buffer);
-		}
-	}
-	// Open the file for writing, create it if it doesn't exist
-	FILE *file = fopen(filename, "w");
-	if (file == NULL) {
-		perror("Error opening the sequence file");
-		exit(1);
-	}
-
-	// Write content to the file
-	if (fprintf(file, "%s", content) < 0) {
-		perror("Error writing data to the sequence file");
-		fclose(file);
-		exit(1);
-	}
-
-	logprint("SUCCESFUL: File written successfully.\n");
-
-	// Close the file
-	fclose(file);
-
-	printf("Registered new sequence!\n");
-}*/
+/* vim: set ts=2 sw=2 noet:*/
 
 void generate_new_sequence(credential_t *cred)
 {
