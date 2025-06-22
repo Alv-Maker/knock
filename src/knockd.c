@@ -1528,7 +1528,15 @@ int open_mqtt_port(knocker_t sealer)
 	snprintf(command, sizeof(command), "iptables -A INPUT -p tcp --dport %d -j ACCEPT", 8883);
 	ret = system(command);
 	snprintf(command, sizeof(command), "iptables -A INPUT -i lo -j ACCEPT");
-	ret = system(command);
+	ret = ret | system(command);
+	if(sealer.from_ipv6)
+	{
+		snprintf(command, sizeof(command), "ip6tables -A INPUT -p tcp --dport %d -j ACCEPT", 8883);
+		ret = ret | system(command);
+		snprintf(command, sizeof(command), "ip6tables -A INPUT -i lo -j ACCEPT");
+		ret = ret | system(command);
+		vprint("opened mqtt port for ipv6\n");
+	}
 	if (ret != 0)
 	{
 		vprint("failed to open mqtt port, skipping...\n");
@@ -1566,7 +1574,15 @@ int close_mqtt_port(knocker_t sealer)
 	snprintf(command, sizeof(command), "iptables -D INPUT -p tcp --dport %d -j ACCEPT", 8883);
 	ret = system(command);
 	snprintf(command, sizeof(command), "iptables -D INPUT -i lo -j ACCEPT");
-	ret = system(command); 
+	ret = ret | system(command);
+	if(sealer.from_ipv6)
+	{
+		snprintf(command, sizeof(command), "ip6tables -D INPUT -p tcp --dport %d -j ACCEPT", 8883);
+		ret = ret | system(command);
+		snprintf(command, sizeof(command), "ip6tables -D INPUT -i lo -j ACCEPT");
+		ret = ret | system(command);
+		vprint("closed mqtt port for ipv6\n");
+	}
 	if (ret != 0)
 	{
 		vprint("failed to close mqtt port, skipping...\n");
@@ -2397,12 +2413,23 @@ void search_and_exec(unsigned short *sequence, char* sailerIP)
 			//TODO: parse the command and execute it after, if not %IP% and other rules doesn't work
 			vprint("Found matching sequence for door %s\n", door->name);
 			char parsed_cmd[PATH_MAX];
-			parse_cmd(parsed_cmd, sizeof(parsed_cmd), door->start_command, sailerIP);
+			if (door->start_command6 && sailerIP && strchr(sailerIP, ':')) {
+				// If the door has an IPv6 command and the IP looks like IPv6, use it
+				parse_cmd(parsed_cmd, sizeof(parsed_cmd), door->start_command6, sailerIP);
+			} else {
+				parse_cmd(parsed_cmd, sizeof(parsed_cmd), door->start_command, sailerIP);
+			}
+			//parse_cmd(parsed_cmd, sizeof(parsed_cmd), door->start_command, sailerIP);
 			exec_cmd(parsed_cmd, door->name);
 			if(door->stop_command)
 			{
 				char parsed_stop_cmd[PATH_MAX];
-				parse_cmd(parsed_stop_cmd, sizeof(parsed_stop_cmd), door->stop_command, sailerIP);
+				if (door->stop_command6 && sailerIP && strchr(sailerIP, ':')) {
+					parse_cmd(parsed_stop_cmd, sizeof(parsed_stop_cmd), door->stop_command6, sailerIP);
+				} else {
+					parse_cmd(parsed_stop_cmd, sizeof(parsed_stop_cmd), door->stop_command, sailerIP);
+				}
+				//parse_cmd(parsed_stop_cmd, sizeof(parsed_stop_cmd), door->stop_command, sailerIP);
 				sleep(door->cmd_timeout);
 				exec_cmd(parsed_stop_cmd, door->name);
 			}
