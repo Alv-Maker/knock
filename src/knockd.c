@@ -1922,29 +1922,27 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			vprint("removing failed knock attempt (%s)\n", attempt->src);
 		}
 
-		///* Check if timeout has been reached */
-		// if (!nix && (pkt_secs - attempt->seq_start) >= attempt->door->seq_timeout)
-		//{
-		//
-		//	/* Do we know the hostname? */
-		//	if (attempt->srchost)
-		//	{
-		//		/* Log the hostname */
-		//		vprint("%s (%s): %s: sequence timeout (stage %d)\n", attempt->src, attempt->srchost,
-		//			   attempt->door->name, attempt->stage);
-		//		logprint("%s (%s): %s: sequence timeout (stage %d)\n", attempt->src, attempt->srchost,
-		//				 attempt->door->name, attempt->stage);
-		//	}
-		//	else
-		//	{
-		//		/* Log the IP */
-		//		vprint("%s: %s: sequence timeout (stage %d)\n", attempt->src,
-		//			   attempt->door->name, attempt->stage);
-		//		logprint("%s: %s: sequence timeout (stage %d)\n", attempt->src,
-		//				 attempt->door->name, attempt->stage);
-		//	}
-		//	nix = 1;
-		//}
+		
+
+		// Check if timeout has been reached
+		 if (!nix && (pkt_secs - attempt->seq_start) >= 10)
+		{
+		
+			/* Do we know the hostname? */
+			if (attempt->srchost)
+			{
+				/* Log the hostname */
+				vprint("%s (%s): sequence timeout (stage %d)\n", attempt->src, attempt->srchost, attempt->stage);
+				logprint("%s (%s): sequence timeout (stage %d)\n", attempt->src, attempt->srchost, attempt->stage);
+			}
+			else
+			{
+				/* Log the IP */
+				vprint("%s: sequence timeout (stage %d)\n", attempt->src, attempt->stage);
+				logprint("%s: sequence timeout (stage %d)\n", attempt->src, attempt->stage);
+			}
+			nix = 1;
+		}
 
 		/* If clear flag is set */
 		if (nix)
