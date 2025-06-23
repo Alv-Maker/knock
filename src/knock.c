@@ -257,7 +257,7 @@ void usage()
 	printf("  -V, --version        display version\n");
 	printf("  -h, --help           this help\n");
 	printf("\n");
-	printf("example:  knock myserver.example.com 123:tcp 456:udp 789:tcp\n");
+	printf("example:  knock myserver.example.com 123 456 789\n");
 	printf("\n");
 	exit(1);
 }
