@@ -55,6 +55,7 @@ unsigned short *parse_port_sequence(FILE *fp);
 char *do_knocking(const char *hostname, unsigned short *sequence);
 char* read_line(FILE *fp);
 
+
 int o_verbose = 0;
 int o_udp = 0;
 int o_delay = 0;
@@ -202,7 +203,6 @@ int main(int argc, char **argv)
 		unsigned short proto = PROTO_TCP;
 		const char *port;
 		char *ptr, *arg = strdup(argv[optind]);
-		vprint("Processing argument: %s\n", arg);
 
 		if ((ptr = strchr(arg, ':')))
 		{

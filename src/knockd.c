@@ -109,8 +109,8 @@ typedef struct opendoor
 typedef struct
 {
 	unsigned short sequence[SEQ_MAX];
-	unsigned char anchorTopic[80];
-	unsigned char sailerTopic[80];
+	char anchorTopic[80];
+	char sailerTopic[80];
 	unsigned short *keySequence;
 	unsigned short keySequenceCount;
 	unsigned int MQTT_port;
@@ -221,16 +221,6 @@ int main(int argc, char **argv)
 
 	printf("knockd %s\n", version);
 
-	//credential_t *cred = malloc(sizeof(credential_t));
-	//strcpy((char *)cred->anchorTopic, "knockd/anchor");
-	//strcpy((char *)cred->sailerTopic, "knockd/sailer");
-	//cred->keySequenceCount = 2;
-	//cred->keySequence = malloc(sizeof(unsigned short) * 2);
-	//cred->keySequence[0] = 1234;
-	//cred->keySequence[1] = 4321;
-	//cred->MQTT_port = 1883;
-
-	//credentials = list_add(credentials, cred);
 
 	credential_t* cred = generate_new_credentials();
 
@@ -1751,7 +1741,7 @@ void process_attempt(knocker_t *attempt)
 
 		/* child */
 		secondPhaseManager(attempt);
-		vprint("HAPPY XMAS!\n");
+		vprint("Iteration completed!\n");
 	}
 }
 
@@ -2303,7 +2293,7 @@ unsigned short *receive_sequence(char *topic, unsigned int port)
 		rc = MQTTClient_receive(client, &topicName, &topicLen, &message, 5000);
 		if (rc == MQTTCLIENT_SUCCESS && message != NULL)
 		{
-			vprint("Received seq: %s", message->payload);
+			vprint("Received seq: %s\n", message->payload);
 			if (strcmp(message->payload, "END_SEQUENCE") == 0)
 			{
 				printf("End of sequence received, exiting...\n");
@@ -2332,7 +2322,7 @@ void secondPhaseManager(knocker_t *sealer)
 	vprint("Size of credentials vector: %d\n", list_count(credentials));
 
 	open_mqtt_port(*sealer);
-
+	sleep(1); // Syncing time
 	send_sequence(new_cred, sealer->cred->anchorTopic, sealer->cred->MQTT_port, sealer->src);
 	sleep(1); // Syncing time
 	
