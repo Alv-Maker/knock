@@ -2191,7 +2191,7 @@ void send_sequence(credential_t *cred, char *topic, unsigned int port, char *sai
 	// Initialize the content buffer as an empty string
 	sleep(1); // Wait for the connection to be established
 	rc = MQTTClient_publish(client, topic, sizeof(size_str), size_str, 2, 0, NULL);
-
+	MQTTClient_yield();
 	if (rc != MQTTCLIENT_SUCCESS)
 	{
 		vprint("publish error %i", rc);
