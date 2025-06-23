@@ -1139,8 +1139,8 @@ void generate_pcap_filter()
 			/* accept only incoming packets */
 			for (myip = myips; myip != NULL; myip = myip->next)
 			{
-				//if (myip->is_ipv6 != ipv6)
-				//	continue;
+				if (myip->is_ipv6 != ipv6)
+					continue;
 				if (!head_set)
 				{
 					bufsize = realloc_strcat(&buffer, "((dst host ", bufsize);
