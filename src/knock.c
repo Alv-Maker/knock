@@ -316,7 +316,6 @@ void *get_new_sequence(char *host, unsigned int port, char *topic)
 		vprint("Failed to connect MQTT client, return code: %d\n", rc);
 		return NULL;
 	}
-	vprint("Connected to MQTT broker at %s\n", client);
 
 
 	rc = MQTTClient_subscribe(client, topic, 2);
