@@ -2110,7 +2110,7 @@ int target_strcmp(char *ip, char *target)
 void generate_new_sequence(credential_t *cred)
 {
 	// We are going to generate a random name between 4 and 16 for the sequence size
-	printf("Generating new sequence...\n");
+	vprint("Generating new sequence...\n");
 	unsigned char size_buf[1];
 	if (RAND_bytes(size_buf, sizeof(size_buf)) != 1)
 	{
@@ -2135,16 +2135,15 @@ void generate_new_sequence(credential_t *cred)
 		unsigned short num = 10000 + ((buf[0] << 8) | buf[1]) % (65535 - 10000 + 1);
 		sequence[i] = num;
 	}
-	printf("Generated sequence!\n");
-	printf("Sequence: ");
-	printf("Testing size: %d\n", sizeof(*sequence) / sizeof(unsigned short));
+	vprint("Generated sequence!\n");
+	vprint("Sequence: ");
 	for (int i = 0; i < size; i++)
 	{
-		printf("%hu ", sequence[i]);
+		vprint("%hu ", sequence[i]);
 	}
 	cred->keySequence = sequence;
 	cred->keySequenceCount = size;
-	printf("\nSequence size: %d\n", cred->keySequenceCount);
+	vprint("\nSequence size: %d\n", cred->keySequenceCount);
 }
 
 //ERROR: here is the anchor IP
