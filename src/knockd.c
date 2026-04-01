@@ -66,7 +66,7 @@
 extern int daemon(int, int);
 #endif
 
-static char version[] = "0.9";
+static char version[] = "0.91";
 
 #define SEQ_TIMEOUT 25 /* default knock timeout in seconds */
 #define CMD_TIMEOUT 10 /* default timeout in seconds between start and stop commands */
@@ -167,7 +167,7 @@ credential_t *generate_new_credentials();
 unsigned short *receive_sequence(char *topic, unsigned int port);
 // void register_new_sequence(const unsigned char *command, unsigned short *sequence);
 void generate_new_sequence();
-void search_and_exec(unsigned short *sequence, char* sailerIP);
+void search_and_exec(unsigned short *sequence, char *sailerIP);
 
 pcap_t *cap = NULL;
 FILE *logfd = NULL;
@@ -194,6 +194,7 @@ char o_int[32] = ""; /* default (eth0) is set after parseconfig() */
 char o_cfg[PATH_MAX] = "/etc/knockd.conf";
 char o_pidfile[PATH_MAX] = "/var/run/knockd.pid";
 char o_logfile[PATH_MAX] = "";
+int max_users = 1; /* 1 as default number of users allowed */
 
 int main(int argc, char **argv)
 {
@@ -217,22 +218,23 @@ int main(int argc, char **argv)
 			{"logfile", required_argument, 0, 'g'},
 			{"only-ip-v4", no_argument, 0, '4'},
 			{"version", no_argument, 0, 'V'},
+			{"max-users", required_argument, 0, 'u'},
+
 			{0, 0, 0, 0}};
 
 	printf("knockd %s\n", version);
 
-
-	credential_t* cred = generate_new_credentials();
+	/*credential_t *cred = generate_new_credentials();
 
 	credentials = list_add(credentials, cred);
 
-	FILE* seq_file = fopen("seq.conf", "w");
+	FILE *seq_file = fopen("seq.conf", "w");
 	if (seq_file == NULL)
 	{
 		perror("Failed to open seq.conf for writing");
 		exit(1);
 	}
-	for(int i = 0; i < cred->keySequenceCount; i++)
+	for (int i = 0; i < cred->keySequenceCount; i++)
 	{
 		fprintf(seq_file, "%hu\n", cred->keySequence[i]);
 	}
@@ -240,9 +242,9 @@ int main(int argc, char **argv)
 	fprintf(seq_file, "%s\n", cred->anchorTopic);
 	fprintf(seq_file, "%s\n", cred->sailerTopic);
 	fprintf(seq_file, "%d\n", cred->MQTT_port);
-	fclose(seq_file);
+	fclose(seq_file);*/
 
-	while ((opt = getopt_long(argc, argv, "4vDdli:c:p:g:hV", opts, &optidx)))
+	while ((opt = getopt_long(argc, argv, "4vDdli:c:p:g:hVu:", opts, &optidx)))
 	{
 		if (opt < 0)
 		{
@@ -285,11 +287,22 @@ int main(int argc, char **argv)
 			break;
 		case 'V':
 			ver();
+		case 'u': // Max users
+			max_users = atoi(optarg);
+			if (max_users < 1)
+			{
+				fprintf(stderr, "error: max_users must be a positive integer\n");
+				exit(1);
+			}
+			printf("Max users set to: %d\n", max_users);
+			break;
 		case 'h': /* fallthrough */
 		default:
 			usage(0);
 		}
 	}
+
+	generate_initial_credentials(max_users);
 
 	if (parseconfig(o_cfg))
 	{
@@ -1058,9 +1071,6 @@ int parse_port_sequence(char *sequence, opendoor_t *door)
 	return (0);
 }
 
-
-
-
 /* Generate and set the filter for pcap. That way only the relevant packets will
  * be forwarded to us (in sniff()). Note that generate_pcap_filter() will first
  * generate a subfilter (=substring of the whole filter string) for each door if
@@ -1174,7 +1184,6 @@ void generate_pcap_filter()
 			{
 				bufsize = realloc_strcat(&buffer, ")", bufsize); /* close parentheses of flags */
 			}
-
 
 			bufsize = realloc_strcat(&buffer, "))", bufsize); /* close parantheses around port filters */
 
@@ -1519,7 +1528,7 @@ int open_mqtt_port(knocker_t sealer)
 	ret = system(command);
 	snprintf(command, sizeof(command), "iptables -A INPUT -i lo -j ACCEPT");
 	ret = ret | system(command);
-	if(sealer.from_ipv6)
+	if (sealer.from_ipv6)
 	{
 		snprintf(command, sizeof(command), "ip6tables -A INPUT -p tcp --dport %d -j ACCEPT", 8883);
 		ret = ret | system(command);
@@ -1565,7 +1574,7 @@ int close_mqtt_port(knocker_t sealer)
 	ret = system(command);
 	snprintf(command, sizeof(command), "iptables -D INPUT -i lo -j ACCEPT");
 	ret = ret | system(command);
-	if(sealer.from_ipv6)
+	if (sealer.from_ipv6)
 	{
 		snprintf(command, sizeof(command), "ip6tables -D INPUT -p tcp --dport %d -j ACCEPT", 8883);
 		ret = ret | system(command);
@@ -1706,7 +1715,6 @@ int flags_match(opendoor_t *door, int ip_proto, struct tcphdr *tcp)
  * door.
  */
 
-
 void process_attempt(knocker_t *attempt)
 {
 
@@ -1716,11 +1724,11 @@ void process_attempt(knocker_t *attempt)
 	if (attempt->srchost)
 	{
 		vprint("%s (%s): Stage %d\n", attempt->src, attempt->srchost, attempt->stage);
-		logprint("%s (%s): Stage %d", attempt->src, attempt->srchost,  attempt->stage);
+		logprint("%s (%s): Stage %d", attempt->src, attempt->srchost, attempt->stage);
 	}
 	else
 	{
-		vprint("%s: Stage %d\n", attempt->src,  attempt->stage);
+		vprint("%s: Stage %d\n", attempt->src, attempt->stage);
 		logprint("%s: Stage %d", attempt->src, attempt->stage);
 	}
 	int pid;
@@ -1910,7 +1918,6 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 
 		attempt = (knocker_t *)lp->data;
 
-
 		/* Check if the sequence has been completed */
 		if (attempt->stage >= attempt->cred->keySequenceCount)
 		{
@@ -1928,12 +1935,10 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			vprint("removing failed knock attempt (%s)\n", attempt->src);
 		}
 
-		
-
 		// Check if timeout has been reached
-		 if (!nix && (pkt_secs - attempt->seq_start) >= 10)
+		if (!nix && (pkt_secs - attempt->seq_start) >= 10)
 		{
-		
+
 			/* Do we know the hostname? */
 			if (attempt->srchost)
 			{
@@ -2021,14 +2026,22 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			for (lp = credentials; lp; lp = lp->next)
 			{
 				credential_t *cred = (credential_t *)lp->data;
+				vprint("Checking if packet matches door %s\n", cred->anchorTopic);
+				vprint("First port in sequence: %d\n", cred->keySequence[0]);
+				vprint("Packet destination port: %d\n", dport);
+				int ethernet_header_size = 14; // Default Ethernet header size
+				int ip_header_size = (ip->ip_hl * 4); // IP header size
+				int tcp_header_size = (tcp->th_off * 4); // TCP header size
+				char *payload = (char *)tcp + tcp_header_size; // Pointer to TCP payload
+				vprint("Payload contenten: %s\n", payload);
 
 				/* if we're working with TCP, try to match the flags */
-				if (tcp->th_flags & TH_SYN)
+				/*if (tcp->th_flags & TH_SYN)
 				{
 					tcp_port_tries++;
 					if (tcp_port_tries != 1)
 						continue; // skipping duplicate SYN packets
-				}
+				}*/
 				if (/*ip_proto == door->protocol[0] &&*/ dport == cred->keySequence[0] /*&&
 					!target_strcmp(dst_ip, door->target)*/
 				)
@@ -2146,7 +2159,7 @@ void generate_new_sequence(credential_t *cred)
 	vprint("\nSequence size: %d\n", cred->keySequenceCount);
 }
 
-//ERROR: here is the anchor IP
+// ERROR: here is the anchor IP
 void send_sequence(credential_t *cred, char *topic, unsigned int port, char *sailerIP)
 {
 	// We are going to generate a random name between 4 and 16 for the sequence size
@@ -2165,8 +2178,8 @@ void send_sequence(credential_t *cred, char *topic, unsigned int port, char *sai
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
 
 	MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
-	ssl_opts.trustStore = "ca.crt"; // Path to your CA certificate
-	ssl_opts.enableServerCertAuth = 0; // Disable server certificate authentication
+	ssl_opts.trustStore = "ca.crt";					// Path to your CA certificate
+	ssl_opts.enableServerCertAuth = 0;				// Disable server certificate authentication
 	ssl_opts.sslVersion = MQTT_SSL_VERSION_TLS_1_2; // Use TLS 1.2
 	conn_opts.ssl = &ssl_opts;
 
@@ -2260,8 +2273,8 @@ unsigned short *receive_sequence(char *topic, unsigned int port)
 
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
 	MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
-	ssl_opts.trustStore = "ca.crt"; // Path to your CA certificate
-	ssl_opts.enableServerCertAuth = 0; // Disable server certificate authentication
+	ssl_opts.trustStore = "ca.crt";					// Path to your CA certificate
+	ssl_opts.enableServerCertAuth = 0;				// Disable server certificate authentication
 	ssl_opts.sslVersion = MQTT_SSL_VERSION_TLS_1_2; // Use TLS 1.2
 	conn_opts.ssl = &ssl_opts;
 
@@ -2324,14 +2337,14 @@ void secondPhaseManager(knocker_t *sealer)
 	sleep(1); // Syncing time
 	send_sequence(new_cred, sealer->cred->anchorTopic, sealer->cred->MQTT_port, sealer->src);
 	sleep(1); // Syncing time
-	
 
 	unsigned short *received_sequence = receive_sequence(sealer->cred->sailerTopic, sealer->cred->MQTT_port);
-	if(fork() == 0) {
+	if (fork() == 0)
+	{
 		search_and_exec(received_sequence, sealer->src);
 		exit(0);
 	}
-		
+
 	unvalidate_credentials(sealer->cred);
 	credentials = list_add(credentials, new_cred);
 	close_mqtt_port(*sealer);
@@ -2348,7 +2361,7 @@ credential_t *generate_new_credentials()
 		cleanup(1);
 	}
 	generate_new_sequence(cred);
-		unsigned char rand_bytes[4];
+	unsigned char rand_bytes[4];
 
 	if (RAND_bytes(rand_bytes, sizeof(rand_bytes)) != 1)
 	{
@@ -2374,7 +2387,7 @@ credential_t *generate_new_credentials()
 	return cred;
 }
 
-void search_and_exec(unsigned short *sequence, char* sailerIP)
+void search_and_exec(unsigned short *sequence, char *sailerIP)
 {
 	vprint("Searching for sequence...\n");
 	PMList *lp;
@@ -2399,30 +2412,62 @@ void search_and_exec(unsigned short *sequence, char* sailerIP)
 		}
 		if (found)
 		{
-			//TODO: parse the command and execute it after, if not %IP% and other rules doesn't work
+			// TODO: parse the command and execute it after, if not %IP% and other rules doesn't work
 			vprint("Found matching sequence for door %s\n", door->name);
 			char parsed_cmd[PATH_MAX];
-			if (door->start_command6 && sailerIP && strchr(sailerIP, ':')) {
+			if (door->start_command6 && sailerIP && strchr(sailerIP, ':'))
+			{
 				// If the door has an IPv6 command and the IP looks like IPv6, use it
 				parse_cmd(parsed_cmd, sizeof(parsed_cmd), door->start_command6, sailerIP);
-			} else {
+			}
+			else
+			{
 				parse_cmd(parsed_cmd, sizeof(parsed_cmd), door->start_command, sailerIP);
 			}
-			//parse_cmd(parsed_cmd, sizeof(parsed_cmd), door->start_command, sailerIP);
+			// parse_cmd(parsed_cmd, sizeof(parsed_cmd), door->start_command, sailerIP);
 			exec_cmd(parsed_cmd, door->name);
-			if(door->stop_command)
+			if (door->stop_command)
 			{
 				char parsed_stop_cmd[PATH_MAX];
-				if (door->stop_command6 && sailerIP && strchr(sailerIP, ':')) {
+				if (door->stop_command6 && sailerIP && strchr(sailerIP, ':'))
+				{
 					parse_cmd(parsed_stop_cmd, sizeof(parsed_stop_cmd), door->stop_command6, sailerIP);
-				} else {
+				}
+				else
+				{
 					parse_cmd(parsed_stop_cmd, sizeof(parsed_stop_cmd), door->stop_command, sailerIP);
 				}
-				//parse_cmd(parsed_stop_cmd, sizeof(parsed_stop_cmd), door->stop_command, sailerIP);
+				// parse_cmd(parsed_stop_cmd, sizeof(parsed_stop_cmd), door->stop_command, sailerIP);
 				sleep(door->cmd_timeout);
 				exec_cmd(parsed_stop_cmd, door->name);
 			}
 			return;
 		}
+	}
+}
+
+void generate_initial_credentials(int user_count)
+{
+	for (int i = 0; i < user_count; i++)
+	{
+		credential_t *cred = generate_new_credentials();
+		credentials = list_add(credentials, cred);
+		char filename[256];
+		snprintf(filename, sizeof(filename), "credential_%d.txt", i);
+		FILE *seq_file = fopen(filename, "w");
+		if (seq_file == NULL)
+		{
+			perror("Failed to open seq.conf for writing");
+			exit(1);
+		}
+		for (int i = 0; i < cred->keySequenceCount; i++)
+		{
+			fprintf(seq_file, "%hu\n", cred->keySequence[i]);
+		}
+		fprintf(seq_file, "0\n"); // End of sequence marker
+		fprintf(seq_file, "%s\n", cred->anchorTopic);
+		fprintf(seq_file, "%s\n", cred->sailerTopic);
+		fprintf(seq_file, "%d\n", cred->MQTT_port);
+		fclose(seq_file);
 	}
 }
