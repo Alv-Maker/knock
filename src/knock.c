@@ -493,22 +493,22 @@ char* do_knocking(const char *hostname, unsigned short *sequence)
 		/* create socket */
 
 		int flags;
-		sd = socket(infoptr->ai_family, SOCK_STREAM, 0);
+		sd = socket(infoptr->ai_family, SOCK_DGRAM, 0);
 		if (sd == -1)
 		{
 			fprintf(stderr, "Cannot open socket\n");
 			exit(1);
 		}
 		flags = fcntl(sd, F_GETFL, 0);
-		fcntl(sd, F_SETFL, flags | O_NONBLOCK);
+		fcntl(sd, F_SETFL, flags);
 
 		/* extract ip as string (v4 or v6) */
 		getnameinfo(infoptr->ai_addr, infoptr->ai_addrlen, ipname, sizeof(ipname), NULL, 0, NI_NUMERICHOST);
 
 		/* connect or send UDP packet */
 
-		vprint("hitting tcp %s:%hu\n", ipname, sequence[i]);
-		connect(sd, infoptr->ai_addr, infoptr->ai_addrlen);
+		vprint("hitting udp %s:%hu\n", ipname, sequence[i]);
+		sendto(sd, "hi from udp", 11, 0, infoptr->ai_addr, infoptr->ai_addrlen);
 
 		close(sd);
 		usleep(1000 * o_delay);

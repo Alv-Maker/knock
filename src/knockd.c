@@ -1172,8 +1172,9 @@ void generate_pcap_filter()
 				}
 				snprintf(port_str, sizeof(port_str), "%hu", cred->keySequence[i]); /* unsigned short to string */
 				bufsize = realloc_strcat(&buffer, port_str, bufsize);			   /* append port number */
-																				   //}
+																				   //  }
 			}
+
 			if (tcp_present)
 			{
 				bufsize = realloc_strcat(&buffer, ")", bufsize); /* close parentheses of TCP ports */
@@ -1184,6 +1185,33 @@ void generate_pcap_filter()
 			{
 				bufsize = realloc_strcat(&buffer, ")", bufsize); /* close parentheses of flags */
 			}
+
+			/* Now add UDP filters */
+			head_set = 0;
+			for (i = 0; i < cred->keySequenceCount; i++)
+			{
+				if (!head_set)
+				{ /* first UDP port in the sequence */
+					if (tcp_present)
+						bufsize = realloc_strcat(&buffer, " or ", bufsize);
+					bufsize = realloc_strcat(&buffer, "(udp dst port ", bufsize);
+					head_set = 1;
+					udp_present = 1;
+				}
+				else
+				{ /* not the first UDP port in the sequence */
+					bufsize = realloc_strcat(&buffer, " or ", bufsize);
+				}
+				snprintf(port_str, sizeof(port_str), "%hu", cred->keySequence[i]);
+				bufsize = realloc_strcat(&buffer, port_str, bufsize);
+			}
+
+			if (udp_present)
+			{
+				bufsize = realloc_strcat(&buffer, ")", bufsize); /* close UDP ports */
+			}
+
+			//bufsize = realloc_strcat(&buffer, "))", bufsize); /* close parentheses */
 
 			bufsize = realloc_strcat(&buffer, "))", bufsize); /* close parantheses around port filters */
 
@@ -1839,6 +1867,8 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			udp = (struct udphdr *)((u_char *)ip + (ip->ip_hl * 4));
 			sport = ntohs(udp->uh_sport);
 			dport = ntohs(udp->uh_dport);
+			char *payload = (char *)udp + sizeof(struct udphdr);
+			vprint("UDP payload: %.*s\n", ntohs(udp->uh_ulen) - sizeof(struct udphdr), payload);
 		}
 	}
 	else if (ip->ip_v == 6)
@@ -2029,11 +2059,9 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 				vprint("Checking if packet matches door %s\n", cred->anchorTopic);
 				vprint("First port in sequence: %d\n", cred->keySequence[0]);
 				vprint("Packet destination port: %d\n", dport);
-				int ethernet_header_size = 14; // Default Ethernet header size
-				int ip_header_size = (ip->ip_hl * 4); // IP header size
-				int tcp_header_size = (tcp->th_off * 4); // TCP header size
-				char *payload = (char *)tcp + tcp_header_size; // Pointer to TCP payload
-				vprint("Payload contenten: %s\n", payload);
+				int ethernet_header_size = 14;				   // Default Ethernet header size
+				int ip_header_size = (ip->ip_hl * 4);		   // IP header size
+				int tcp_header_size = (tcp->th_off * 4);	   // TCP header size
 
 				/* if we're working with TCP, try to match the flags */
 				/*if (tcp->th_flags & TH_SYN)
