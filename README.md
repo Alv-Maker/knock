@@ -10,12 +10,12 @@ Modifications' code: Copyright (c) 2025, Alberto Nóvoa González <angonzalez22@
 # Installation process:
 1. Clone the repository.
 2. Navigate to the cloned directory and run the following commands:
-`
+```bash
 $ autoreconf -fi
 $ ./configure --prefix=/usr/local
 $ make
 $ sudo make install (only if you want to install it system-wide, otherwise you can run the binary from the build directory)
-`
+```
 3. Edit the configuration file (default: /etc/knockd.conf) to set up your desired port knocking sequences and actions. Don't specify protocols or flags, this things are not supported in this implementation, but yet can be written in the configuration file, but they will be ignored.
 
 # Usage:
