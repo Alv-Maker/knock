@@ -52,8 +52,10 @@ void ver();
 void usage();
 void *get_new_sequence(char *host, unsigned int port, char *topic);
 unsigned short *parse_port_sequence(FILE *fp);
-char *do_knocking(const char *hostname, unsigned short *sequence);
+char *do_knocking(const char *hostname, unsigned short *sequence, char *message);
 char* read_line(FILE *fp);
+char** slice_message(const char* message, int slices);
+void free_sliced_message(char** slices, int count);
 
 
 int o_verbose = 0;
@@ -69,6 +71,7 @@ int main(int argc, char **argv)
 	char *ipname = malloc(256);
 	int result;
 	char *hostname;
+	char *message = "hi from udp";
 	static struct option opts[] =
 		{
 			{"verbose", no_argument, 0, 'v'},
@@ -78,9 +81,10 @@ int main(int argc, char **argv)
 			{"version", no_argument, 0, 'V'},
 			{"ipv4", no_argument, 0, '4'},
 			{"ipv6", no_argument, 0, '6'},
+			{"message", required_argument, 0, 'm'},
 			{0, 0, 0, 0}};
 
-	while ((opt = getopt_long(argc, argv, "vud:hV46", opts, &optidx)))
+	while ((opt = getopt_long(argc, argv, "vud:hV46m:", opts, &optidx)))
 	{
 		if (opt < 0)
 		{
@@ -106,6 +110,10 @@ int main(int argc, char **argv)
 			break;
 		case '6':
 			o_ip = IP_V6;
+			break;
+		case 'm':
+			vprint("Using custom message: %s\n", optarg);
+			message = optarg;
 			break;
 		case 'h': /* fallthrough */
 		default:
@@ -145,7 +153,7 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	ipname = do_knocking(hostname, sequence);
+	ipname = do_knocking(hostname, sequence, message);
 
 	char *seq = get_new_sequence(ipname, mqtt_port, anchor_topic);
 	if (seq == NULL)
@@ -462,7 +470,7 @@ char* read_line(FILE *fp)
 	return line;
 }
 
-char* do_knocking(const char *hostname, unsigned short *sequence)
+char* do_knocking(const char *hostname, unsigned short *sequence, char *message)
 {
 	int sd;
 	int result;
@@ -472,6 +480,18 @@ char* do_knocking(const char *hostname, unsigned short *sequence)
 	hints.ai_family = o_ip;
 	char ipname[256];
 	char *ip = malloc(256);
+	
+	/* Count actual sequence length */
+	int sequence_len = 0;
+	for (int j = 0; sequence[j] != 0; j++) {
+		sequence_len++;
+	}
+	
+	char** message_slices = slice_message(message, sequence_len);
+	if (message_slices == NULL) {
+		fprintf(stderr, "Failed to slice message\n");
+		return NULL;
+	}
 
 	for (int i = 0; sequence[i] != 0; i++)
 	{
@@ -507,8 +527,8 @@ char* do_knocking(const char *hostname, unsigned short *sequence)
 
 		/* connect or send UDP packet */
 
-		vprint("hitting udp %s:%hu\n", ipname, sequence[i]);
-		sendto(sd, "hi from udp", 11, 0, infoptr->ai_addr, infoptr->ai_addrlen);
+		vprint("hitting udp %s:%hu with message: %s\n", ipname, sequence[i], message_slices[i]);
+		sendto(sd, message_slices[i], strlen(message_slices[i]), 0, infoptr->ai_addr, infoptr->ai_addrlen);
 
 		close(sd);
 		usleep(1000 * o_delay);
@@ -516,8 +536,65 @@ char* do_knocking(const char *hostname, unsigned short *sequence)
 
 		usleep(1000 * o_delay); // Simulate delay between knocks
 	}
+	
+	free_sliced_message(message_slices, sequence_len);
 	snprintf(ip, 256, "%s", ipname);
 	return ip; // Return the last IP name used for knocking
+}
+
+char** slice_message(const char* message, int slices)
+{
+	if (slices <= 0) {
+		return NULL;
+	}
+	
+	int message_len = strlen(message);
+	int slice_size = (message_len + slices - 1) / slices; // Calculate slice size
+	char** message_slides = malloc(slices * sizeof(char*));
+	if (message_slides == NULL) {
+		fprintf(stderr, "Failed to allocate memory for message slides\n");
+		return NULL;
+	}
+
+	for (int i = 0; i < slices; i++)
+	{
+		message_slides[i] = malloc(slice_size + 1); // Allocate memory for each slice
+		if (message_slides[i] == NULL) {
+			fprintf(stderr, "Failed to allocate memory for slice %d\n", i);
+			free_sliced_message(message_slides, i);
+			return NULL;
+		}
+		
+		// Calculate how many characters are actually left to copy
+		int offset = i * slice_size;
+		int remaining = message_len - offset;
+		
+		if (remaining > 0) {
+			// Copy only the characters that exist (not beyond end of string)
+			int to_copy = remaining < slice_size ? remaining : slice_size;
+			strncpy(message_slides[i], message + offset, to_copy);
+			message_slides[i][to_copy] = '\0';
+		} else {
+			// No more characters, empty string
+			message_slides[i][0] = '\0';
+		}
+	}
+
+	return message_slides;
+}
+
+void free_sliced_message(char** slices, int count)
+{
+	if (slices == NULL) {
+		return;
+	}
+	
+	for (int i = 0; i < count; i++) {
+		if (slices[i] != NULL) {
+			free(slices[i]);
+		}
+	}
+	free(slices);
 }
 
 /* vim: set ts=2 sw=2 noet: */

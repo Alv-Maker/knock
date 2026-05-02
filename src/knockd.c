@@ -135,6 +135,7 @@ typedef struct knocker
 	char *srchost; /* Hostname */
 	time_t seq_start;
 	int from_ipv6;
+	char message[256];
 } knocker_t;
 PMList *attempts = NULL;
 
@@ -1211,7 +1212,7 @@ void generate_pcap_filter()
 				bufsize = realloc_strcat(&buffer, ")", bufsize); /* close UDP ports */
 			}
 
-			//bufsize = realloc_strcat(&buffer, "))", bufsize); /* close parentheses */
+			// bufsize = realloc_strcat(&buffer, "))", bufsize); /* close parentheses */
 
 			bufsize = realloc_strcat(&buffer, "))", bufsize); /* close parantheses around port filters */
 
@@ -1766,11 +1767,13 @@ void process_attempt(knocker_t *attempt)
 		{
 			vprint("%s (%s): OPEN SESAME\n", attempt->src, attempt->srchost);
 			logprint("%s (%s): OPEN SESAME", attempt->src, attempt->srchost);
+			vprint("Message received: %s", attempt->message);
 		}
 		else
 		{
 			vprint("%s: OPEN SESAME\n", attempt->src);
 			logprint("%s: OPEN SESAME", attempt->src);
+			vprint("Message received: %s\n", attempt->message);
 		}
 
 		/* run the associated command */
@@ -1807,6 +1810,7 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 	PMList *found_attempts = NULL, *found_attempt;
 	int ip_proto = 0;
 	int from_ipv6 = 0;
+	char *payload = NULL;
 
 	if (lltype == DLT_EN10MB)
 	{
@@ -1867,7 +1871,7 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			udp = (struct udphdr *)((u_char *)ip + (ip->ip_hl * 4));
 			sport = ntohs(udp->uh_sport);
 			dport = ntohs(udp->uh_dport);
-			char *payload = (char *)udp + sizeof(struct udphdr);
+			payload = (char *)udp + sizeof(struct udphdr);
 			vprint("UDP payload: %.*s\n", ntohs(udp->uh_ulen) - sizeof(struct udphdr), payload);
 		}
 	}
@@ -2036,6 +2040,8 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			if (/*flagsmatch && ip_proto == attempt->door->protocol[attempt->stage] &&*/
 				dport == attempt->cred->keySequence[attempt->stage])
 			{
+				strncat(attempt->message, payload, sizeof(attempt->message) - strlen(attempt->message) - 1);
+
 				process_attempt(attempt);
 				//} else if(flagsmatch == 0) {
 				/* TCP flags didn't match -- just ignore this packet, don't
@@ -2059,9 +2065,9 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 				vprint("Checking if packet matches door %s\n", cred->anchorTopic);
 				vprint("First port in sequence: %d\n", cred->keySequence[0]);
 				vprint("Packet destination port: %d\n", dport);
-				int ethernet_header_size = 14;				   // Default Ethernet header size
-				int ip_header_size = (ip->ip_hl * 4);		   // IP header size
-				int tcp_header_size = (tcp->th_off * 4);	   // TCP header size
+				int ethernet_header_size = 14;			 // Default Ethernet header size
+				int ip_header_size = (ip->ip_hl * 4);	 // IP header size
+				int tcp_header_size = (tcp->th_off * 4); // TCP header size
 
 				/* if we're working with TCP, try to match the flags */
 				/*if (tcp->th_flags & TH_SYN)
@@ -2115,6 +2121,8 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 					{
 						vprint("New attempt added to the list");
 					}
+
+					strncat(attempt->message, payload, sizeof(attempt->message) - strlen(attempt->message) - 1);
 					process_attempt(attempt);
 				}
 			}
@@ -2499,3 +2507,75 @@ void generate_initial_credentials(int user_count)
 		fclose(seq_file);
 	}
 }
+
+/*
+	Esta funcion creara una lista de secuencias que rotaran, generadas aleatoriamente, y las guardara en el archivo seq_book.txt, a razon de una por linea.
+*/
+void generate_sequence_book(int sequence_count)
+{
+	FILE *seq_file = fopen("seq_book.txt", "w");
+	if (seq_file == NULL)
+	{
+		perror("Failed to open seq_book.txt for writing");
+		exit(1);
+	}
+	for (int i = 0; i < sequence_count; i++)
+	{
+		credential_t *cred = generate_new_credentials();
+		for (int j = 0; j < cred->keySequenceCount; j++)
+		{
+			fprintf(seq_file, "%hu ", cred->keySequence[j]);
+		}
+		fprintf(seq_file, "\n");
+		free(cred->keySequence);
+		free(cred);
+	}
+	fclose(seq_file);
+}
+
+/*
+	Esta funcion recuperara una secuencia del libro de secuencias y la autorizará para su uso.
+
+	Procedimiento: se recupera y se incorpora la lista de credenciales. Nada mas
+*/
+void authorize_sequence_from_book()
+{
+	FILE *seq_file = fopen("seq_book.txt", "r");
+	if (seq_file == NULL)
+	{
+		perror("Failed to open seq_book.txt for reading");
+		exit(1);
+	}
+	char line[256];
+	if (fgets(line, sizeof(line), seq_file) != NULL)
+	{
+		credential_t *cred = malloc(sizeof(credential_t));
+		if (cred == NULL)
+		{
+			perror("malloc");
+			exit(1);
+		}
+		cred->keySequence = malloc(SEQ_MAX * sizeof(unsigned short));
+		if (cred->keySequence == NULL)
+		{
+			perror("malloc");
+			exit(1);
+		}
+		else
+		{
+			char *token = strtok(line, " ");
+			int index = 0;
+			while (token != NULL && index < SEQ_MAX)
+			{
+				cred->keySequence[index] = (unsigned short)atoi(token);
+				token = strtok(NULL, " ");
+				index++;
+			}
+			cred->keySequenceCount = index;
+		}
+		credentials = list_add(credentials, cred);
+	}
+}
+		
+
+
