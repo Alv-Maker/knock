@@ -62,6 +62,7 @@ int o_verbose = 0;
 int o_udp = 0;
 int o_delay = 0;
 int o_ip = IP_DEFAULT;
+char sequence_file[PATH_MAX] = "credential_0.txt"; /* default sequence file */
 
 int main(int argc, char **argv)
 {
@@ -84,7 +85,7 @@ int main(int argc, char **argv)
 			{"message", required_argument, 0, 'm'},
 			{0, 0, 0, 0}};
 
-	while ((opt = getopt_long(argc, argv, "vud:hV46m:", opts, &optidx)))
+	while ((opt = getopt_long(argc, argv, "vud:hV46m:f:", opts, &optidx)))
 	{
 		if (opt < 0)
 		{
@@ -114,6 +115,11 @@ int main(int argc, char **argv)
 		case 'm':
 			vprint("Using custom message: %s\n", optarg);
 			message = optarg;
+			break;
+		case 'f':
+			strncpy(sequence_file, optarg, sizeof(sequence_file) - 1);
+			sequence_file[sizeof(sequence_file) - 1] = '\0';
+			vprint("Using custom sequence file: %s\n", sequence_file);
 			break;
 		case 'h': /* fallthrough */
 		default:
