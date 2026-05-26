@@ -26,7 +26,7 @@ $ sudo make install (only if you want to install it system-wide, otherwise you c
 - To send a knock sequence: `knock -f /path/to/sequence_file.txt` (parameter f is not required if you are using the default sequence file path)
 
 # Dynamic port knocking:
-This implementation supports dynamic port knocking, this means that the knocking sequence is not static and change every time a knock sequence is sent. Initially, and hasta the version 0.92 this process was done using MQTT server, with topics changing every time too. But in the latests versions the dynamic port knocking is done using a sequence file, reducing the exchange of information between the client and the server, and also reducing the attack surface of the implementation.
+This implementation supports dynamic port knocking, this means that the knocking sequence is not static and change every time a knock sequence is sent. Initially, and up to the version 0.92 this process was done using MQTT server, with topics changing every time too. But in the latests versions the dynamic port knocking is done using a sequence file, reducing the exchange of information between the client and the server, and also reducing the attack surface of the implementation.
 
 # Message sending:
 This implementation also supports sending a custom message to the client in the sequence file, using variable slices to separate the message between the knocking sequence. This message go in clear, so it is not recommended to use this feature if you are sending sensitive information, but it can be useful for future uses.
