@@ -169,6 +169,8 @@ unsigned short *receive_sequence(char *topic, unsigned int port);
 // void register_new_sequence(const unsigned char *command, unsigned short *sequence);
 void generate_new_sequence();
 void search_and_exec(unsigned short *sequence, char *sailerIP);
+void dump_credentials(const char *filename);
+void restore_credentials(const char *filename);
 
 pcap_t *cap = NULL;
 FILE *logfd = NULL;
@@ -244,8 +246,9 @@ int main(int argc, char **argv)
 	fprintf(seq_file, "%s\n", cred->sailerTopic);
 	fprintf(seq_file, "%d\n", cred->MQTT_port);
 	fclose(seq_file);*/
+	int flag = 0;
 
-	while ((opt = getopt_long(argc, argv, "4vDdli:c:p:g:hVu:", opts, &optidx)))
+	while ((opt = getopt_long(argc, argv, "4vDdli:c:p:g:hVu:f:", opts, &optidx)))
 	{
 		if (opt < 0)
 		{
@@ -297,13 +300,20 @@ int main(int argc, char **argv)
 			}
 			printf("Max users set to: %d\n", max_users);
 			break;
+		case 'f':
+			restore_credentials(optarg);
+			flag = 1;
+			break;
 		case 'h': /* fallthrough */
+
 		default:
 			usage(0);
 		}
 	}
 
-	generate_initial_credentials(max_users);
+	if(!flag)
+		generate_initial_credentials(max_users);
+
 	generate_sequence_book(32);
 
 	if (parseconfig(o_cfg))
@@ -2094,6 +2104,7 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 					}
 					attempt->from_ipv6 = from_ipv6;
 					attempt->srchost = NULL;
+					attempt->message[0] = '\0';
 					strcpy(attempt->src, src_ip);
 					/* try a reverse lookup if enabled  */
 					if (o_lookup)
@@ -2387,6 +2398,7 @@ void secondPhaseManager(knocker_t *sealer)
 
 	unvalidate_credentials(sealer->cred);
 	credentials = list_add(credentials, new_cred);
+	dump_credentials("persistent_credentials.bin");
 	close_mqtt_port(*sealer);
 	generate_pcap_filter(); /* update pcap filter */
 }
@@ -2582,4 +2594,87 @@ void authorize_sequence_from_book()
 }
 		
 
+/*
+ * Dump all current credentials to a backup file (binary format)
+ */
+void dump_credentials(const char *filename)
+{
+	FILE *backup_file = fopen(filename, "wb");
+	if (backup_file == NULL)
+	{
+		perror("Failed to open backup file for writing");
+		return;
+	}
 
+	// Count credentials
+	int cred_count = 0;
+	PMList *lp;
+	for (lp = credentials; lp; lp = lp->next)
+		cred_count++;
+
+	// Write count
+	fwrite(&cred_count, sizeof(int), 1, backup_file);
+
+	// Write each credential
+	for (lp = credentials; lp; lp = lp->next)
+	{
+		credential_t *cred = (credential_t *)lp->data;
+		fwrite(&cred->MQTT_port, sizeof(unsigned short), 1, backup_file);
+		fwrite(cred->anchorTopic, sizeof(char), 80, backup_file);
+		fwrite(cred->sailerTopic, sizeof(char), 80, backup_file);
+		fwrite(&cred->keySequenceCount, sizeof(int), 1, backup_file);
+		fwrite(cred->keySequence, sizeof(unsigned short), cred->keySequenceCount, backup_file);
+	}
+
+	fclose(backup_file);
+	vprint("Credentials dumped to %s\n", filename);
+}
+
+/*
+ * Restore credentials from a backup file (binary format)
+ */
+void restore_credentials(const char *filename)
+{
+	FILE *backup_file = fopen(filename, "rb");
+	if (backup_file == NULL)
+	{
+		perror("Failed to open backup file for reading");
+		return;
+	}
+
+	// Read count
+	int cred_count;
+	fread(&cred_count, sizeof(int), 1, backup_file);
+
+	// Read each credential
+	for (int i = 0; i < cred_count; i++)
+	{
+		credential_t *cred = malloc(sizeof(credential_t));
+		if (cred == NULL)
+		{
+			perror("malloc");
+			fclose(backup_file);
+			return;
+		}
+
+		fread(&cred->MQTT_port, sizeof(unsigned short), 1, backup_file);
+		fread(cred->anchorTopic, sizeof(char), 80, backup_file);
+		fread(cred->sailerTopic, sizeof(char), 80, backup_file);
+		fread(&cred->keySequenceCount, sizeof(int), 1, backup_file);
+
+		cred->keySequence = malloc(cred->keySequenceCount * sizeof(unsigned short));
+		if (cred->keySequence == NULL)
+		{
+			perror("malloc");
+			free(cred);
+			fclose(backup_file);
+			return;
+		}
+
+		fread(cred->keySequence, sizeof(unsigned short), cred->keySequenceCount, backup_file);
+		credentials = list_add(credentials, cred);
+	}
+
+	fclose(backup_file);
+	vprint("Credentials restored from %s\n", filename);
+}
