@@ -6,6 +6,8 @@ Modifications' code: Copyright (c) 2025, Alberto Nóvoa González <angonzalez22@
 # Dependences:
 - libpcap
 - autoconf tools (for building from source)
+- openssl ssl and crypto libraries
+- mqtt paho c client library (only for versions prior to 0.92)
 
 # Installation process:
 1. Clone the repository.

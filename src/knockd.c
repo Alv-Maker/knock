@@ -304,6 +304,7 @@ int main(int argc, char **argv)
 	}
 
 	generate_initial_credentials(max_users);
+	generate_sequence_book(32);
 
 	if (parseconfig(o_cfg))
 	{
@@ -644,6 +645,7 @@ void usage(int exit_code)
 	printf("  -4, --only-ip-v4       do not track ipv6\n");
 	printf("  -V, --version          display version\n");
 	printf("  -h, --help             this help\n");
+	printf("  -u, --max-users <n>      maximum number of users allowed to have credentials (default is 1)\n");
 	printf("\n");
 	exit(exit_code);
 }
@@ -1768,12 +1770,14 @@ void process_attempt(knocker_t *attempt)
 			vprint("%s (%s): OPEN SESAME\n", attempt->src, attempt->srchost);
 			logprint("%s (%s): OPEN SESAME", attempt->src, attempt->srchost);
 			vprint("Message received: %s", attempt->message);
+			strcpy(attempt->message, ""); /* clear message */
 		}
 		else
 		{
 			vprint("%s: OPEN SESAME\n", attempt->src);
 			logprint("%s: OPEN SESAME", attempt->src);
 			vprint("Message received: %s\n", attempt->message);
+			strcpy(attempt->message, ""); /* clear message */
 		}
 
 		/* run the associated command */

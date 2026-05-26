@@ -142,10 +142,10 @@ int main(int argc, char **argv)
 	hostname = argv[optind++];
 
 	FILE *fp;
-	fp = fopen("seq.conf", "r");
+	fp = fopen(sequence_file, "r");
 	if (fp == NULL)
 	{
-		fprintf(stderr, "Failed to open seq.conf for reading\n");
+		fprintf(stderr, "Failed to open %s for reading\n", sequence_file);
 		exit(1);
 	}
 	unsigned short *sequence = parse_port_sequence(fp);
@@ -263,13 +263,15 @@ void usage()
 {
 	printf("usage: knock [options] <host> <port[:proto]> [port[:proto]] ...\n");
 	printf("options:\n");
-	printf("  -u, --udp            make all ports hits use UDP (default is TCP)\n");
+	printf("  -u, --udp            make all ports hits use UDP (default is TCP) -- not supported\n");
 	printf("  -d, --delay <t>      wait <t> milliseconds between port hits\n");
 	printf("  -4, --ipv4           Force usage of IPv4\n");
 	printf("  -6, --ipv6           Force usage of IPv6\n");
 	printf("  -v, --verbose        be verbose\n");
 	printf("  -V, --version        display version\n");
 	printf("  -h, --help           this help\n");
+	printf("  -m  message to send in each knock (default is 'hi from udp')\n");
+	printf("  -f,   file to read the sequence and topics from (default is 'credential_0.txt')\n");
 	printf("\n");
 	printf("example:  knock myserver.example.com 123 456 789\n");
 	printf("\n");
@@ -291,10 +293,10 @@ void *get_new_sequence(char *host, unsigned int port, char *topic)
 {
 	MQTTClient client;
 	FILE *fp;
-	fp = fopen("seq.conf", "w");
+	fp = fopen(sequence_file, "w");
 	if (fp == NULL)
 	{
-		fprintf(stderr, "Failed to open seq.conf for writing\n");
+		fprintf(stderr, "Failed to open %s for writing\n", sequence_file);
 		return NULL;
 	}
 
@@ -435,7 +437,7 @@ unsigned short *parse_port_sequence(FILE *fp)
 {
 	if (fp == NULL)
 	{
-		fprintf(stderr, "Failed to open seq.conf for reading\n");
+		fprintf(stderr, "Failed to open %s for reading\n", sequence_file);
 		return NULL;
 	}
 	unsigned short *sequence = malloc(32 * sizeof(unsigned short));
@@ -455,7 +457,7 @@ unsigned short *parse_port_sequence(FILE *fp)
 			{
 				break;
 			}
-			fprintf(stderr, "Failed to read port from seq.conf\n");
+			fprintf(stderr, "Failed to read port from %s\n", sequence_file);
 			free(sequence);
 			return NULL;
 		}
