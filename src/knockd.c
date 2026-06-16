@@ -119,6 +119,11 @@ typedef struct
 
 } credential_t;
 
+typedef struct{
+	char* sequence_book_filename; // Stores the filename of the sequence book
+	unsigned short valid_sequence; // Stores the valid sequence index on the sequence book
+} credential_new_t;
+
 PMList *doors = NULL;
 PMList *credentials = NULL;
 short tcp_port_tries = 0;
@@ -314,7 +319,7 @@ int main(int argc, char **argv)
 	if(!flag)
 		generate_initial_credentials(max_users);
 
-	generate_sequence_book(32);
+	generate_sequence_books(max_users);
 
 	if (parseconfig(o_cfg))
 	{
@@ -2525,14 +2530,30 @@ void generate_initial_credentials(int user_count)
 }
 
 /*
-	Esta funcion creara una lista de secuencias que rotaran, generadas aleatoriamente, y las guardara en el archivo seq_book.txt, a razon de una por linea.
+	This function will generate a sequence book for a specified number of users.
+	Each user will have a sequence book file named "seq_book_<user_index>.txt".
+	Each sequence book will contain 32 sequences.
 */
-void generate_sequence_book(int sequence_count)
+
+void generate_sequence_books(int user_count)
 {
-	FILE *seq_file = fopen("seq_book.txt", "w");
+	for (int i = 0; i < user_count; i++)
+	{
+		char filename[256];
+		snprintf(filename, sizeof(filename), "seq_book_%d.txt", i);
+		generate_sequence_book(32, filename); // Generate 32 sequences for each user
+	}
+}
+
+/*
+	This function will generate a sequence book with a specified number of sequences and save it to a file.
+*/
+void generate_sequence_book(int sequence_count, char *filename)
+{
+	FILE *seq_file = fopen(filename, "w");
 	if (seq_file == NULL)
 	{
-		perror("Failed to open seq_book.txt for writing");
+		perror("Failed to open seq_book for writing");
 		exit(1);
 	}
 	for (int i = 0; i < sequence_count; i++)
@@ -2550,16 +2571,14 @@ void generate_sequence_book(int sequence_count)
 }
 
 /*
-	Esta funcion recuperara una secuencia del libro de secuencias y la autorizará para su uso.
-
-	Procedimiento: se recupera y se incorpora la lista de credenciales. Nada mas
+	This function will read a sequence from a book file and add it to the credentials list.
 */
-void authorize_sequence_from_book()
+void authorize_sequence_from_book(char book_filename[])
 {
-	FILE *seq_file = fopen("seq_book.txt", "r");
+	FILE *seq_file = fopen(book_filename, "r");
 	if (seq_file == NULL)
 	{
-		perror("Failed to open seq_book.txt for reading");
+		perror("Failed to open seq_book for reading");
 		exit(1);
 	}
 	char line[256];
