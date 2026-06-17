@@ -119,8 +119,9 @@ typedef struct
 
 } credential_t;
 
-typedef struct{
-	char* sequence_book_filename; // Stores the filename of the sequence book
+typedef struct
+{
+	char *sequence_book_filename;  // Stores the filename of the sequence book
 	unsigned short valid_sequence; // Stores the valid sequence index on the sequence book
 } credential_new_t;
 
@@ -141,6 +142,7 @@ typedef struct knocker
 	time_t seq_start;
 	int from_ipv6;
 	char message[256];
+	unsigned short received_sequence[SEQ_MAX]; /* Store the received sequence */
 } knocker_t;
 PMList *attempts = NULL;
 
@@ -316,7 +318,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if(!flag)
+	if (!flag)
 		generate_initial_credentials(max_users);
 
 	generate_sequence_books(max_users);
@@ -1784,6 +1786,7 @@ void process_attempt(knocker_t *attempt)
 		{
 			vprint("%s (%s): OPEN SESAME\n", attempt->src, attempt->srchost);
 			logprint("%s (%s): OPEN SESAME", attempt->src, attempt->srchost);
+			attempt->message[strlen(attempt->message)] = '\0'; /* remove trailing newline */
 			vprint("Message received: %s", attempt->message);
 			strcpy(attempt->message, ""); /* clear message */
 		}
@@ -1791,7 +1794,8 @@ void process_attempt(knocker_t *attempt)
 		{
 			vprint("%s: OPEN SESAME\n", attempt->src);
 			logprint("%s: OPEN SESAME", attempt->src);
-			vprint("Message received: %s\n", attempt->message);
+			attempt->message[strlen(attempt->message)] = '\0'; /* remove trailing newline */
+			vprint("Message received: %s", attempt->message);
 			strcpy(attempt->message, ""); /* clear message */
 		}
 
@@ -1829,7 +1833,7 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 	PMList *found_attempts = NULL, *found_attempt;
 	int ip_proto = 0;
 	int from_ipv6 = 0;
-	char *payload = NULL;
+	char *payload = "";
 
 	if (lltype == DLT_EN10MB)
 	{
@@ -2059,7 +2063,23 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			if (/*flagsmatch && ip_proto == attempt->door->protocol[attempt->stage] &&*/
 				dport == attempt->cred->keySequence[attempt->stage])
 			{
-				strncat(attempt->message, payload, sizeof(attempt->message) - strlen(attempt->message) - 1);
+				if (attempt->stage == 1)
+				{
+					char* received_sequence_char = strtok(payload, " "); // Use space as delimiter
+					
+					for (int i = 0;strcmp(received_sequence_char, "END_SEQUENCE") != 0; i++)
+					{
+						vprint("Received sequence char: %s\n", received_sequence_char);
+						attempt->received_sequence[i] = atoi(received_sequence_char);
+						vprint("Received sequence[%d]: %d\n", i, attempt->received_sequence[i]);
+						received_sequence_char = strtok(NULL, " ");
+					}
+				}
+				else if (attempt->stage > 1 && strcmp(payload, "END_MESSAGE") != 0)
+				{
+					strncat(attempt->message, payload, sizeof(attempt->message) - strlen(attempt->message) - 1);
+	
+				}
 
 				process_attempt(attempt);
 				//} else if(flagsmatch == 0) {
@@ -2142,7 +2162,7 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 						vprint("New attempt added to the list");
 					}
 
-					strncat(attempt->message, payload, sizeof(attempt->message) - strlen(attempt->message) - 1);
+					attempt->cred->MQTT_port = atoi(payload);
 					process_attempt(attempt);
 				}
 			}
@@ -2394,10 +2414,10 @@ void secondPhaseManager(knocker_t *sealer)
 	send_sequence(new_cred, sealer->cred->anchorTopic, sealer->cred->MQTT_port, sealer->src);
 	sleep(1); // Syncing time
 
-	unsigned short *received_sequence = receive_sequence(sealer->cred->sailerTopic, sealer->cred->MQTT_port);
+	//unsigned short *received_sequence = receive_sequence(sealer->cred->sailerTopic, sealer->cred->MQTT_port);
 	if (fork() == 0)
 	{
-		search_and_exec(received_sequence, sealer->src);
+		search_and_exec(sealer->received_sequence, sealer->src);
 		exit(0);
 	}
 
@@ -2611,7 +2631,6 @@ void authorize_sequence_from_book(char book_filename[])
 		credentials = list_add(credentials, cred);
 	}
 }
-		
 
 /*
  * Dump all current credentials to a backup file (binary format)

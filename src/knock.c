@@ -36,6 +36,7 @@
 #include <getopt.h>
 #include <fcntl.h>
 #include <MQTTClient.h>
+#include <openssl/rand.h>
 
 static char version[] = "0.9";
 
@@ -52,7 +53,7 @@ void ver();
 void usage();
 void *get_new_sequence(char *host, unsigned int port, char *topic);
 unsigned short *parse_port_sequence(FILE *fp);
-char *do_knocking(const char *hostname, unsigned short *sequence, char *message);
+char *do_knocking(const char *hostname, unsigned short *sequence, char *message, int argc, char **argv, int old_portind);
 char* read_line(FILE *fp);
 char** slice_message(const char* message, int slices);
 void free_sliced_message(char** slices, int count);
@@ -159,7 +160,7 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	ipname = do_knocking(hostname, sequence, message);
+	ipname = do_knocking(hostname, sequence, message, argc, argv, optind);
 
 	char *seq = get_new_sequence(ipname, mqtt_port, anchor_topic);
 	if (seq == NULL)
@@ -212,6 +213,8 @@ int main(int argc, char **argv)
 
 	vprint("Connected to MQTT broker at %s\n", url);
 
+	/* COMENTADO: Publicación de secuencia antigua por MQTT
+	   Ahora la secuencia antigua se envía como payload del segundo paquete en do_knocking
 	for (; optind < argc; optind++)
 	{
 		unsigned short proto = PROTO_TCP;
@@ -239,6 +242,7 @@ int main(int argc, char **argv)
 	char *end = "END_SEQUENCE";
 	MQTTClient_publish(client, sailer_topic, strlen(end), end, 2, 0, NULL);
 	MQTTClient_yield();
+	*/
 
 	MQTTClient_disconnect(client, 1000);
 	MQTTClient_destroy(&client);
@@ -478,7 +482,7 @@ char* read_line(FILE *fp)
 	return line;
 }
 
-char* do_knocking(const char *hostname, unsigned short *sequence, char *message)
+char* do_knocking(const char *hostname, unsigned short *sequence, char *message, int argc, char **argv, int old_portind)
 {
 	int sd;
 	int result;
@@ -495,11 +499,14 @@ char* do_knocking(const char *hostname, unsigned short *sequence, char *message)
 		sequence_len++;
 	}
 	
-	char** message_slices = slice_message(message, sequence_len);
+	char** message_slices = slice_message(message, sequence_len-2);
 	if (message_slices == NULL) {
 		fprintf(stderr, "Failed to slice message\n");
 		return NULL;
 	}
+
+	/* Buffer para la secuencia antigua, declarado aquí para evitar corrupción de memoria */
+	char payload_buffer[2048] = {0};
 
 	for (int i = 0; sequence[i] != 0; i++)
 	{
@@ -535,9 +542,68 @@ char* do_knocking(const char *hostname, unsigned short *sequence, char *message)
 
 		/* connect or send UDP packet */
 
-		vprint("hitting udp %s:%hu with message: %s\n", ipname, sequence[i], message_slices[i]);
-		sendto(sd, message_slices[i], strlen(message_slices[i]), 0, infoptr->ai_addr, infoptr->ai_addrlen);
-
+		/* MODIFICADO: En el segundo paquete (i == 1), enviar la secuencia antigua como payload */
+		char *payload;
+		int payload_len;
+		
+		if (i == 1) {
+			/* Construir payload con los puertos antiguos (secuencia antigua) */
+			memset(payload_buffer, 0, sizeof(payload_buffer));
+			int buffer_pos = 0;
+			
+			for (int j = old_portind; j < argc; j++) {
+				const char *port;
+				char *ptr, *arg = strdup(argv[j]);
+				
+				if ((ptr = strchr(arg, ':'))) {
+					*ptr = '\0';
+					port = arg;
+					arg = ++ptr;
+				} else {
+					port = arg;
+				}
+				
+				buffer_pos += snprintf(payload_buffer + buffer_pos, sizeof(payload_buffer) - buffer_pos, "%s ", port);
+				free(arg);
+			}
+			
+			/* Agregar marcador de fin de secuencia */
+			snprintf(payload_buffer + buffer_pos, sizeof(payload_buffer) - buffer_pos, "END_SEQUENCE");
+			
+			payload = payload_buffer;
+			payload_len = strlen(payload);
+			
+			vprint("Sending old sequence as payload: %s\n", payload);
+		} else if (i > 1) {
+			/* Enviar mensaje sliceado en los demás paquetes */
+			if (message_slices[i-2][0] != NULL) {
+				payload = message_slices[i-2];
+				payload_len = strlen(payload);
+			}
+			else {
+				payload = "END_MESSAGE";
+				payload_len = strlen(payload);
+			}
+		}
+		else{
+			unsigned int random_num;
+			if(RAND_bytes((unsigned char *)&random_num, sizeof(random_num)) != 1) {
+				fprintf(stderr, "Failed to generate random bytes for payload\n");
+				exit(1);
+			}
+			random_num = random_num % 33; // Generate random number 0-32
+			payload_buffer[0] = '\0'; // Clear the buffer
+			snprintf(payload_buffer, sizeof(payload_buffer), "%u", random_num);
+			payload = payload_buffer;
+			payload_len = strlen(payload);
+			vprint("Generated random payload: %s\n", payload);
+		}
+		
+			vprint("hitting udp %s:%hu with message: %s\n", ipname, sequence[i], payload);
+		
+		
+		sendto(sd, payload, payload_len, 0, infoptr->ai_addr, infoptr->ai_addrlen);
+	
 		close(sd);
 		usleep(1000 * o_delay);
 		freeaddrinfo(infoptr);
@@ -545,7 +611,7 @@ char* do_knocking(const char *hostname, unsigned short *sequence, char *message)
 		usleep(1000 * o_delay); // Simulate delay between knocks
 	}
 	
-	free_sliced_message(message_slices, sequence_len);
+	free_sliced_message(message_slices, sequence_len-2);
 	snprintf(ip, 256, "%s", ipname);
 	return ip; // Return the last IP name used for knocking
 }
@@ -581,10 +647,10 @@ char** slice_message(const char* message, int slices)
 			// Copy only the characters that exist (not beyond end of string)
 			int to_copy = remaining < slice_size ? remaining : slice_size;
 			strncpy(message_slides[i], message + offset, to_copy);
-			message_slides[i][to_copy] = '\0';
+			message_slides[i][to_copy] = NULL;
 		} else {
 			// No more characters, empty string
-			message_slides[i][0] = '\0';
+			message_slides[i][0] = NULL;
 		}
 	}
 
