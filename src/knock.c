@@ -54,10 +54,9 @@ void usage();
 void *get_new_sequence(char *host, unsigned int port, char *topic);
 unsigned short *parse_port_sequence(FILE *fp);
 char *do_knocking(const char *hostname, unsigned short *sequence, char *message, int argc, char **argv, int old_portind);
-char* read_line(FILE *fp);
-char** slice_message(const char* message, int slices);
-void free_sliced_message(char** slices, int count);
-
+char *read_line(FILE *fp);
+char **slice_message(const char *message, int slices);
+void free_sliced_message(char **slices, int count);
 
 int o_verbose = 0;
 int o_udp = 0;
@@ -150,9 +149,9 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 	unsigned short *sequence = parse_port_sequence(fp);
-	char* anchor_topic =  read_line(fp);
-	char *sailer_topic = read_line(fp);
-	unsigned int mqtt_port = atoi(read_line(fp));
+	//	char* anchor_topic =  read_line(fp);
+	//	char *sailer_topic = read_line(fp);
+	//	unsigned int mqtt_port = atoi(read_line(fp));
 	fclose(fp);
 	if (sequence == NULL)
 	{
@@ -162,33 +161,36 @@ int main(int argc, char **argv)
 
 	ipname = do_knocking(hostname, sequence, message, argc, argv, optind);
 
-	char *seq = get_new_sequence(ipname, mqtt_port, anchor_topic);
-	if (seq == NULL)
-	{
-		fprintf(stderr, "Failed to get new sequence\n");
-		exit(1);
-	}
+	// char *seq = get_new_sequence(ipname, mqtt_port, anchor_topic);
+	// if (seq == NULL)
+	//{
+	//	fprintf(stderr, "Failed to get new sequence\n");
+	//	exit(1);
+	// }
 
 	MQTTClient client;
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
 	MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
-	ssl_opts.trustStore = "ca.crt"; // Path to your CA certificate
-	ssl_opts.enableServerCertAuth = 0; // Disable server certificate authentication
+	ssl_opts.trustStore = "ca.crt";					// Path to your CA certificate
+	ssl_opts.enableServerCertAuth = 0;				// Disable server certificate authentication
 	ssl_opts.sslVersion = MQTT_SSL_VERSION_TLS_1_2; // Use TLS 1.2
 	conn_opts.ssl = &ssl_opts;
 
 	char *url = malloc(40);
-	
+
 	int is_ipv6 = strchr(ipname, ':') != NULL;
-	if (is_ipv6) {
+	if (is_ipv6)
+	{
 		vprint("Detected IPv6 address: %s\n", ipname);
 		snprintf(url, 40, "ssl://[%s]:%d", ipname, 8883);
-	} else {
+	}
+	else
+	{
 		vprint("Detected IPv4 address: %s\n", ipname);
 		snprintf(url, 40, "ssl://%s:%d", ipname, 8883);
 	}
 
-	//snprintf(url, 40, "ssl://%s:%d", ipname, 8883);
+	// snprintf(url, 40, "ssl://%s:%d", ipname, 8883);
 
 	vprint("Connecting to MQTT broker at %s\n", url);
 
@@ -306,20 +308,23 @@ void *get_new_sequence(char *host, unsigned int port, char *topic)
 
 	char url[40];
 	int is_ipv6 = strchr(host, ':') != NULL;
-	if (is_ipv6) {
+	if (is_ipv6)
+	{
 		vprint("Detected IPv6 address: %s\n", host);
 		snprintf(url, 40, "ssl://[%s]:%d", host, 8883);
-	} else {
+	}
+	else
+	{
 		vprint("Detected IPv4 address: %s\n", host);
 		snprintf(url, 40, "ssl://%s:%d", host, 8883);
 	}
-	//snprintf(url, 40, "ssl://%s:%u", host, 8883);
+	// snprintf(url, 40, "ssl://%s:%u", host, 8883);
 	printf("Connecting to MQTT broker at %s\n with topic %s\n", url, topic);
 
 	int rc = MQTTClient_create(&client, url, "sailer", MQTTCLIENT_PERSISTENCE_NONE, NULL);
 	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
 	MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
-	ssl_opts.trustStore = "ca.crt"; // Path to your CA certificate
+	ssl_opts.trustStore = "ca.crt";	   // Path to your CA certificate
 	ssl_opts.enableServerCertAuth = 0; // Disable server certificate authentication
 	conn_opts.ssl = &ssl_opts;
 
@@ -336,7 +341,6 @@ void *get_new_sequence(char *host, unsigned int port, char *topic)
 		vprint("Failed to connect MQTT client, return code: %d\n", rc);
 		return NULL;
 	}
-
 
 	rc = MQTTClient_subscribe(client, topic, 2);
 	if (rc != MQTTCLIENT_SUCCESS)
@@ -444,45 +448,57 @@ unsigned short *parse_port_sequence(FILE *fp)
 		fprintf(stderr, "Failed to open %s for reading\n", sequence_file);
 		return NULL;
 	}
+	unsigned short sequenceLineNumber;
 	unsigned short *sequence = malloc(32 * sizeof(unsigned short));
-	if (sequence == NULL)
+
+	fscanf(fp, "%hu", &sequenceLineNumber);
+
+	fgetc(fp);
+
+	// Avanzar hasta la línea sequenceLineNumber + 1
+	unsigned int target = sequenceLineNumber - 1;
+	vprint("Sequence line number: %hu, target line: %u\n", sequenceLineNumber, target);
+	char buffer[256];
+
+	for (unsigned int i = 0; i < target; i++)
 	{
-		fprintf(stderr, "Failed to allocate memory for sequence\n");
-		return NULL;
+		if (fgets(buffer, sizeof(buffer), fp) == NULL)
+			return NULL; // EOF o error
 	}
 
-	short unsigned port;
+	int i = 0;
 
-	for (int i = 0; i < 32; i++)
+	char nextToken, nextNextToken;
+	while (i < 32)
 	{
-		if (fscanf(fp, "%hu", &port) != 1)
-		{
-			if (feof(fp))
-			{
-				break;
-			}
-			fprintf(stderr, "Failed to read port from %s\n", sequence_file);
-			free(sequence);
-			return NULL;
-		}
-		if(port == 0)
-		{
+		
+		if (fscanf(fp, "%hu", &sequence[i]) == 1)
+			i++;
+		else
 			break;
-		}
-		sequence[i] = port;
-		vprint("Parsed port: %hu\n", sequence[i]);
+		nextToken = fgetc(fp);
+		if (nextToken == EOF || nextToken == '\n')
+			break;
+		nextNextToken = fgetc(fp);
+		if (nextNextToken == EOF || nextNextToken == '\n' || nextNextToken == '\r')
+			break;
+		else
+			ungetc(nextNextToken, fp);
+
+		
 	}
+
 	return sequence;
 }
 
-char* read_line(FILE *fp)
+char *read_line(FILE *fp)
 {
 	char *line = malloc(256);
 	fscanf(fp, "%s", line);
 	return line;
 }
 
-char* do_knocking(const char *hostname, unsigned short *sequence, char *message, int argc, char **argv, int old_portind)
+char *do_knocking(const char *hostname, unsigned short *sequence, char *message, int argc, char **argv, int old_portind)
 {
 	int sd;
 	int result;
@@ -492,15 +508,17 @@ char* do_knocking(const char *hostname, unsigned short *sequence, char *message,
 	hints.ai_family = o_ip;
 	char ipname[256];
 	char *ip = malloc(256);
-	
+
 	/* Count actual sequence length */
 	int sequence_len = 0;
-	for (int j = 0; sequence[j] != 0; j++) {
+	for (int j = 0; sequence[j] != 0; j++)
+	{
 		sequence_len++;
 	}
-	
-	char** message_slices = slice_message(message, sequence_len-2);
-	if (message_slices == NULL) {
+
+	char **message_slices = slice_message(message, sequence_len - 2);
+	if (message_slices == NULL)
+	{
 		fprintf(stderr, "Failed to slice message\n");
 		return NULL;
 	}
@@ -545,87 +563,99 @@ char* do_knocking(const char *hostname, unsigned short *sequence, char *message,
 		/* MODIFICADO: En el segundo paquete (i == 1), enviar la secuencia antigua como payload */
 		char *payload;
 		int payload_len;
-		
-		if (i == 1) {
+
+		if (i == 1)
+		{
 			/* Construir payload con los puertos antiguos (secuencia antigua) */
 			memset(payload_buffer, 0, sizeof(payload_buffer));
 			int buffer_pos = 0;
-			
-			for (int j = old_portind; j < argc; j++) {
+
+			for (int j = old_portind; j < argc; j++)
+			{
 				const char *port;
 				char *ptr, *arg = strdup(argv[j]);
-				
-				if ((ptr = strchr(arg, ':'))) {
+
+				if ((ptr = strchr(arg, ':')))
+				{
 					*ptr = '\0';
 					port = arg;
 					arg = ++ptr;
-				} else {
+				}
+				else
+				{
 					port = arg;
 				}
-				
+
 				buffer_pos += snprintf(payload_buffer + buffer_pos, sizeof(payload_buffer) - buffer_pos, "%s ", port);
 				free(arg);
 			}
-			
+
 			/* Agregar marcador de fin de secuencia */
 			snprintf(payload_buffer + buffer_pos, sizeof(payload_buffer) - buffer_pos, "END_SEQUENCE");
-			
+
 			payload = payload_buffer;
 			payload_len = strlen(payload);
-			
+
 			vprint("Sending old sequence as payload: %s\n", payload);
-		} else if (i > 1) {
+		}
+		else if (i > 1)
+		{
 			/* Enviar mensaje sliceado en los demás paquetes */
-			if (message_slices[i-2][0] != NULL) {
-				payload = message_slices[i-2];
+			if (message_slices[i - 2][0] != NULL)
+			{
+				payload = message_slices[i - 2];
 				payload_len = strlen(payload);
 			}
-			else {
+			else
+			{
 				payload = "END_MESSAGE";
 				payload_len = strlen(payload);
 			}
 		}
-		else{
+		else
+		{
 			unsigned int random_num;
-			if(RAND_bytes((unsigned char *)&random_num, sizeof(random_num)) != 1) {
+			if (RAND_bytes((unsigned char *)&random_num, sizeof(random_num)) != 1)
+			{
 				fprintf(stderr, "Failed to generate random bytes for payload\n");
 				exit(1);
 			}
-			random_num = random_num % 33; // Generate random number 0-32
-			payload_buffer[0] = '\0'; // Clear the buffer
+			random_num = random_num % 3 + 1; // Generate random number 0-32
+			payload_buffer[0] = '\0';		 // Clear the buffer
 			snprintf(payload_buffer, sizeof(payload_buffer), "%u", random_num);
 			payload = payload_buffer;
 			payload_len = strlen(payload);
 			vprint("Generated random payload: %s\n", payload);
 		}
-		
-			vprint("hitting udp %s:%hu with message: %s\n", ipname, sequence[i], payload);
-		
-		
+
+		vprint("hitting udp %s:%hu with message: %s\n", ipname, sequence[i], payload);
+
 		sendto(sd, payload, payload_len, 0, infoptr->ai_addr, infoptr->ai_addrlen);
-	
+
 		close(sd);
 		usleep(1000 * o_delay);
 		freeaddrinfo(infoptr);
 
 		usleep(1000 * o_delay); // Simulate delay between knocks
 	}
-	
-	free_sliced_message(message_slices, sequence_len-2);
+
+	free_sliced_message(message_slices, sequence_len - 2);
 	snprintf(ip, 256, "%s", ipname);
 	return ip; // Return the last IP name used for knocking
 }
 
-char** slice_message(const char* message, int slices)
+char **slice_message(const char *message, int slices)
 {
-	if (slices <= 0) {
+	if (slices <= 0)
+	{
 		return NULL;
 	}
-	
+
 	int message_len = strlen(message);
 	int slice_size = (message_len + slices - 1) / slices; // Calculate slice size
-	char** message_slides = malloc(slices * sizeof(char*));
-	if (message_slides == NULL) {
+	char **message_slides = malloc(slices * sizeof(char *));
+	if (message_slides == NULL)
+	{
 		fprintf(stderr, "Failed to allocate memory for message slides\n");
 		return NULL;
 	}
@@ -633,22 +663,26 @@ char** slice_message(const char* message, int slices)
 	for (int i = 0; i < slices; i++)
 	{
 		message_slides[i] = malloc(slice_size + 1); // Allocate memory for each slice
-		if (message_slides[i] == NULL) {
+		if (message_slides[i] == NULL)
+		{
 			fprintf(stderr, "Failed to allocate memory for slice %d\n", i);
 			free_sliced_message(message_slides, i);
 			return NULL;
 		}
-		
+
 		// Calculate how many characters are actually left to copy
 		int offset = i * slice_size;
 		int remaining = message_len - offset;
-		
-		if (remaining > 0) {
+
+		if (remaining > 0)
+		{
 			// Copy only the characters that exist (not beyond end of string)
 			int to_copy = remaining < slice_size ? remaining : slice_size;
 			strncpy(message_slides[i], message + offset, to_copy);
 			message_slides[i][to_copy] = NULL;
-		} else {
+		}
+		else
+		{
 			// No more characters, empty string
 			message_slides[i][0] = NULL;
 		}
@@ -657,14 +691,17 @@ char** slice_message(const char* message, int slices)
 	return message_slides;
 }
 
-void free_sliced_message(char** slices, int count)
+void free_sliced_message(char **slices, int count)
 {
-	if (slices == NULL) {
+	if (slices == NULL)
+	{
 		return;
 	}
-	
-	for (int i = 0; i < count; i++) {
-		if (slices[i] != NULL) {
+
+	for (int i = 0; i < count; i++)
+	{
+		if (slices[i] != NULL)
+		{
 			free(slices[i]);
 		}
 	}

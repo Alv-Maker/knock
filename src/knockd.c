@@ -123,6 +123,11 @@ typedef struct
 {
 	char *sequence_book_filename;  // Stores the filename of the sequence book
 	unsigned short valid_sequence; // Stores the valid sequence index on the sequence book
+	unsigned short sequence[SEQ_MAX];
+	unsigned short *keySequence;
+	unsigned short keySequenceCount;
+	char* pcap_filter_exp;
+	char* pcap_filter_expv6;
 } credential_new_t;
 
 PMList *doors = NULL;
@@ -135,7 +140,8 @@ short tcp_port_tries = 0;
 typedef struct knocker
 {
 	opendoor_t *door;
-	credential_t *cred;
+	credential_t *cred_old;
+	credential_new_t *cred;
 	short stage;
 	char src[64];  /* IP address */
 	char *srchost; /* Hostname */
@@ -178,6 +184,7 @@ void generate_new_sequence();
 void search_and_exec(unsigned short *sequence, char *sailerIP);
 void dump_credentials(const char *filename);
 void restore_credentials(const char *filename);
+credential_new_t *regenerate_credentials(credential_new_t *cred);
 
 pcap_t *cap = NULL;
 FILE *logfd = NULL;
@@ -319,9 +326,9 @@ int main(int argc, char **argv)
 	}
 
 	if (!flag)
-		generate_initial_credentials(max_users);
+		//generate_initial_credentials(max_users);
+		generate_initial_new_credentials(max_users);
 
-	generate_sequence_books(max_users);
 
 	if (parseconfig(o_cfg))
 	{
@@ -1101,7 +1108,7 @@ void generate_pcap_filter()
 {
 	PMList *lp;
 	opendoor_t *door;
-	credential_t *cred;
+	credential_new_t *cred;
 	ip_literal_t *myip;
 	char *buffer = NULL;   /* temporary buffer to create the individual filter strings */
 	size_t bufsize = 0;	   /* size of buffer */
@@ -1131,7 +1138,7 @@ void generate_pcap_filter()
 
 		for (lp = credentials; lp; lp = lp->next)
 		{
-			cred = (credential_t *)lp->data;
+			cred = (credential_new_t *)lp->data;
 
 			/* if we get here at least one door had a pcap_filter_exp == NULL */
 			modified_filters = 1;
@@ -1301,7 +1308,7 @@ void generate_pcap_filter()
 		int first = 1;
 		for (lp = credentials; lp; lp = lp->next)
 		{
-			cred = (credential_t *)lp->data;
+			cred = (credential_new_t *)lp->data;
 			for (ipv6 = 0; ipv6 <= 1; ipv6++)
 			{
 				if (ipv6 == 0 && !has_ipv4)
@@ -1418,7 +1425,7 @@ void close_door(opendoor_t *door)
 	free_door(door);
 }
 
-void unvalidate_credentials(credential_t *cred)
+void unvalidate_credentials(credential_new_t *cred)
 {
 	credentials = list_remove(credentials, cred);
 }
@@ -1562,7 +1569,7 @@ int exec_cmd(char *command, char *name)
 	return ret;
 }
 
-int open_mqtt_port(knocker_t sealer)
+/*int open_mqtt_port(knocker_t sealer)
 {
 	int ret;
 	if (sealer.cred->MQTT_port == 0)
@@ -1662,7 +1669,7 @@ int close_mqtt_port_fwd(knocker_t sealer)
 		return 1;
 	}
 	return 0;
-}
+}*/
 
 /*
  * If examining a TCP packet, try to match flags against those in
@@ -2100,8 +2107,8 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			/* did they hit the first port correctly? */
 			for (lp = credentials; lp; lp = lp->next)
 			{
-				credential_t *cred = (credential_t *)lp->data;
-				vprint("Checking if packet matches door %s\n", cred->anchorTopic);
+				credential_new_t *cred = (credential_new_t *)lp->data;
+				vprint("Checking if packet matches door\n");
 				vprint("First port in sequence: %d\n", cred->keySequence[0]);
 				vprint("Packet destination port: %d\n", dport);
 				int ethernet_header_size = 14;			 // Default Ethernet header size
@@ -2152,6 +2159,8 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 					attempt->stage = 0;
 					attempt->seq_start = pkt_secs;
 					attempt->cred = cred;
+					vprint("Next validated sequence: %s\n", payload);
+					attempt->cred->valid_sequence = atoi(payload);
 					attempts = list_add(attempts, attempt);
 					if (!attempt->stage)
 					{
@@ -2162,7 +2171,7 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 						vprint("New attempt added to the list");
 					}
 
-					attempt->cred->MQTT_port = atoi(payload);
+					//attempt->cred->MQTT_port = atoi(payload);
 					process_attempt(attempt);
 				}
 			}
@@ -2199,7 +2208,6 @@ int target_strcmp(char *ip, char *target)
 void generate_new_sequence(credential_t *cred)
 {
 	// We are going to generate a random name between 4 and 16 for the sequence size
-	vprint("Generating new sequence...\n");
 	unsigned char size_buf[1];
 	if (RAND_bytes(size_buf, sizeof(size_buf)) != 1)
 	{
@@ -2224,8 +2232,7 @@ void generate_new_sequence(credential_t *cred)
 		unsigned short num = 10000 + ((buf[0] << 8) | buf[1]) % (65535 - 10000 + 1);
 		sequence[i] = num;
 	}
-	vprint("Generated sequence!\n");
-	vprint("Sequence: ");
+	vprint("New generated sequence: ");
 	for (int i = 0; i < size; i++)
 	{
 		vprint("%hu ", sequence[i]);
@@ -2406,13 +2413,13 @@ unsigned short *receive_sequence(char *topic, unsigned int port)
 
 void secondPhaseManager(knocker_t *sealer)
 {
-	credential_t *new_cred = generate_new_credentials(sealer->cred);
+	credential_new_t *new_cred = regenerate_credentials(sealer->cred);
 	vprint("Size of credentials vector: %d\n", list_count(credentials));
 
-	open_mqtt_port(*sealer);
-	sleep(1); // Syncing time
-	send_sequence(new_cred, sealer->cred->anchorTopic, sealer->cred->MQTT_port, sealer->src);
-	sleep(1); // Syncing time
+	//open_mqtt_port(*sealer);
+	//sleep(1); // Syncing time
+	//send_sequence(new_cred, sealer->cred->anchorTopic, sealer->cred->MQTT_port, sealer->src);
+	//sleep(1); // Syncing time
 
 	//unsigned short *received_sequence = receive_sequence(sealer->cred->sailerTopic, sealer->cred->MQTT_port);
 	if (fork() == 0)
@@ -2421,10 +2428,16 @@ void secondPhaseManager(knocker_t *sealer)
 		exit(0);
 	}
 
+	sleep(1); // Syncing time
 	unvalidate_credentials(sealer->cred);
+	if(list_count(credentials) != 0){
+		vprint("Something went wrong, credentials vector is not empty after unvalidation\n");
+	}
 	credentials = list_add(credentials, new_cred);
-	dump_credentials("persistent_credentials.bin");
-	close_mqtt_port(*sealer);
+	//dump_credentials("persistent_credentials.bin");
+	
+	
+	//close_mqtt_port(*sealer);
 	generate_pcap_filter(); /* update pcap filter */
 }
 
@@ -2537,10 +2550,10 @@ void generate_initial_credentials(int user_count)
 			perror("Failed to open seq.conf for writing");
 			exit(1);
 		}
-		for (int i = 0; i < cred->keySequenceCount; i++)
-		{
-			fprintf(seq_file, "%hu\n", cred->keySequence[i]);
-		}
+		//for (int i = 0; i < cred->keySequenceCount; i++)
+		//{
+		//	fprintf(seq_file, "%hu\n", cred->keySequence[i]);
+		//}
 		fprintf(seq_file, "0\n"); // End of sequence marker
 		fprintf(seq_file, "%s\n", cred->anchorTopic);
 		fprintf(seq_file, "%s\n", cred->sailerTopic);
@@ -2566,7 +2579,7 @@ void generate_sequence_books(int user_count)
 }
 
 /*
-	This function will generate a sequence book with a specified number of sequences and save it to a file.
+	This function will generate a sequence book with a specified number of sequences and save it to a file. At the top line is the first sequence validated
 */
 void generate_sequence_book(int sequence_count, char *filename)
 {
@@ -2576,61 +2589,33 @@ void generate_sequence_book(int sequence_count, char *filename)
 		perror("Failed to open seq_book for writing");
 		exit(1);
 	}
+	unsigned char rand_bytes[2];
+	if (RAND_bytes((unsigned char *)rand_bytes, sizeof(rand_bytes)) != 1)
+	{
+		perror("RAND_bytes");
+		cleanup(1);
+	}
+	unsigned short random_btw_0_32 = rand_bytes[0] % 3 + 1; // Random number between 0 and 32
+	
+	fprintf(seq_file, "%hu\n", random_btw_0_32); // Write the random number to the file
+	vprint("Random sequence index for validation: %hu\n", random_btw_0_32);
 	for (int i = 0; i < sequence_count; i++)
 	{
-		credential_t *cred = generate_new_credentials();
-		for (int j = 0; j < cred->keySequenceCount; j++)
+		int randomSequenceSize = RAND_bytes((unsigned char *)rand_bytes, sizeof(rand_bytes)) == 1 ? (rand_bytes[0] % 13) + 4 : 4; // Random size between 4 and 16
+		unsigned short randomport;
+		vprint("Generating sequence %d with size %d\n", i, randomSequenceSize);
+		for (int j = 0; j < randomSequenceSize; j++)
 		{
-			fprintf(seq_file, "%hu ", cred->keySequence[j]);
+			randomport = RAND_bytes((unsigned char *)rand_bytes, sizeof(rand_bytes)) != 1 ? 10000 : 10000 + ((rand_bytes[0] << 8) | rand_bytes[1]) % (65535 - 10000 + 1);
+			fprintf(seq_file, "%hu ", randomport);
 		}
 		fprintf(seq_file, "\n");
-		free(cred->keySequence);
-		free(cred);
+
 	}
 	fclose(seq_file);
 }
 
-/*
-	This function will read a sequence from a book file and add it to the credentials list.
-*/
-void authorize_sequence_from_book(char book_filename[])
-{
-	FILE *seq_file = fopen(book_filename, "r");
-	if (seq_file == NULL)
-	{
-		perror("Failed to open seq_book for reading");
-		exit(1);
-	}
-	char line[256];
-	if (fgets(line, sizeof(line), seq_file) != NULL)
-	{
-		credential_t *cred = malloc(sizeof(credential_t));
-		if (cred == NULL)
-		{
-			perror("malloc");
-			exit(1);
-		}
-		cred->keySequence = malloc(SEQ_MAX * sizeof(unsigned short));
-		if (cred->keySequence == NULL)
-		{
-			perror("malloc");
-			exit(1);
-		}
-		else
-		{
-			char *token = strtok(line, " ");
-			int index = 0;
-			while (token != NULL && index < SEQ_MAX)
-			{
-				cred->keySequence[index] = (unsigned short)atoi(token);
-				token = strtok(NULL, " ");
-				index++;
-			}
-			cred->keySequenceCount = index;
-		}
-		credentials = list_add(credentials, cred);
-	}
-}
+
 
 /*
  * Dump all current credentials to a backup file (binary format)
@@ -2716,3 +2701,190 @@ void restore_credentials(const char *filename)
 	fclose(backup_file);
 	vprint("Credentials restored from %s\n", filename);
 }
+
+/*
+ * Read the validated sequence index from the first line of the book file,
+ * then retrieve the corresponding sequence from line (index + 1)
+ */
+short *get_sequence_from_book(const char *filename)
+{
+	FILE *book_file = fopen(filename, "r");
+	if (book_file == NULL)
+	{
+		vprint("Failed to open sequence book file %s for reading", filename);
+		return NULL;
+	}
+
+	// Read the first line - sequence index (0-32)
+	int index;
+	if (fscanf(book_file, "%d", &index) != 1)
+	{
+		perror("Failed to read sequence index from book");
+		fclose(book_file);
+		return NULL;
+	}
+
+	// Validate index is between 0 and 32
+	if (index < 0 || index > 32)
+	{
+		fprintf(stderr, "Invalid sequence index: %d\n", index);
+		fclose(book_file);
+		return NULL;
+	}
+
+	// Skip to the target line (index + 1)
+	for (int i = 0; i < index; i++)
+	{
+		char buffer[256];
+		if (fgets(buffer, sizeof(buffer), book_file) == NULL)
+		{
+			fprintf(stderr, "Failed to skip to sequence line\n");
+			fclose(book_file);
+			return NULL;
+		}
+	}
+
+	// Read the sequence from the target line (variable length 4-16 numbers)
+	short *sequence = calloc(16, sizeof(short));
+	if (sequence == NULL)
+	{
+		perror("malloc");
+		fclose(book_file);
+		return NULL;
+	}
+
+	int i = 0;
+
+	char nextToken, nextNextToken;
+	while (i < 32)
+	{
+		
+		if (fscanf(book_file, "%hu", &sequence[i]) == 1)
+			i++;
+		else
+			break;
+		nextToken = fgetc(book_file);
+		if (nextToken == EOF || nextToken == '\n')
+			break;
+		nextNextToken = fgetc(book_file);
+		if (nextNextToken == EOF || nextNextToken == '\n' || nextNextToken == '\r')
+			break;
+		else
+			ungetc(nextNextToken, book_file);
+
+		
+	}
+
+	// Check if we read at least 4 numbers
+	if (i < 4)
+	{
+		fprintf(stderr, "Failed to read sequence: expected 4-16 numbers, got %d\n", i);
+		free(sequence);
+		fclose(book_file);
+		return NULL;
+	}
+
+	fclose(book_file);
+	return sequence;
+}
+
+void generate_initial_new_credentials(int max_users){
+	for (int i = 0; i < max_users; i++)
+	{
+		credential_new_t *cred = malloc(sizeof(credential_new_t));
+		if (cred == NULL)
+		{
+			perror("malloc");
+			return;
+		}
+
+		char filename[256];
+		snprintf(filename, sizeof(filename), "seq_book_%d.txt", i);
+		generate_sequence_book(3, filename); // Generate 32 sequences for each user
+		unsigned short* sequence = get_sequence_from_book(filename); // Read the validated sequence from the book
+		
+		// Check if sequence was successfully retrieved
+		if (sequence == NULL)
+		{
+			fprintf(stderr, "Failed to retrieve sequence from book for user %d\n", i);
+			free(cred);
+			continue;
+		}
+		
+		// Count valid sequence elements
+		int seq_count = 0;
+		for(int j = 0; j < SEQ_MAX && sequence[j] != 0; j++){
+			seq_count++;
+		}
+		
+		// Allocate and copy keySequence
+		cred->keySequence = malloc(seq_count * sizeof(unsigned short));
+		if (cred->keySequence == NULL)
+		{
+			perror("malloc");
+			free(cred);
+			free(sequence);
+			return;
+		}
+		
+		for(int j = 0; j < seq_count; j++){
+			cred->keySequence[j] = sequence[j];
+		}
+		cred->keySequenceCount = seq_count;
+		cred->sequence_book_filename = strdup(filename);
+		credentials = list_add(credentials, cred);
+		free(sequence);
+	}
+}
+
+int replace_first_line(const char *filename, unsigned short newNumber)
+{
+    FILE *in = fopen(filename, "r");
+    if (!in) return -1;
+
+    FILE *out = fopen("temp.txt", "w");
+    if (!out) {
+        fclose(in);
+        return -1;
+    }
+
+    // Escribir la nueva primera línea
+    fprintf(out, "%hu\n", newNumber);
+
+    // Saltar la primera línea original
+    char buffer[512];
+    fgets(buffer, sizeof(buffer), in);
+
+    // Copiar el resto del archivo
+    while (fgets(buffer, sizeof(buffer), in))
+        fputs(buffer, out);
+
+    fclose(in);
+    fclose(out);
+
+    // Reemplazar archivo original
+    rename("temp.txt", filename);
+
+    return 0;
+}
+
+short get_sequence_count(short *sequence)
+{
+	int count = 0;
+	while (count < SEQ_MAX && sequence[count] != 0) {
+		count++;
+	}
+	return count;
+}
+	
+credential_new_t* regenerate_credentials(credential_new_t* old_cred){
+	credential_new_t* new_cred = malloc(sizeof(credential_new_t));
+	new_cred->sequence_book_filename = strdup(old_cred->sequence_book_filename);
+	new_cred->valid_sequence = old_cred->valid_sequence;
+	replace_first_line(new_cred->sequence_book_filename, new_cred->valid_sequence);
+	new_cred->keySequence = get_sequence_from_book(new_cred->sequence_book_filename);
+	new_cred->keySequenceCount = get_sequence_count(new_cred->keySequence);
+	return new_cred;
+}
+
+
