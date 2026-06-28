@@ -35,7 +35,6 @@
 #include <resolv.h>
 #include <getopt.h>
 #include <fcntl.h>
-#include <MQTTClient.h>
 #include <openssl/rand.h>
 
 static char version[] = "0.9";
@@ -168,14 +167,7 @@ int main(int argc, char **argv)
 	//	exit(1);
 	// }
 
-	MQTTClient client;
-	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
-	MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
-	ssl_opts.trustStore = "ca.crt";					// Path to your CA certificate
-	ssl_opts.enableServerCertAuth = 0;				// Disable server certificate authentication
-	ssl_opts.sslVersion = MQTT_SSL_VERSION_TLS_1_2; // Use TLS 1.2
-	conn_opts.ssl = &ssl_opts;
-
+	
 	char *url = malloc(40);
 
 	int is_ipv6 = strchr(ipname, ':') != NULL;
@@ -192,62 +184,7 @@ int main(int argc, char **argv)
 
 	// snprintf(url, 40, "ssl://%s:%d", ipname, 8883);
 
-	vprint("Connecting to MQTT broker at %s\n", url);
-
-	int rc = MQTTClient_create(&client, url, "knock_client", MQTTCLIENT_PERSISTENCE_NONE, NULL);
-	if (rc != MQTTCLIENT_SUCCESS)
-	{
-		fprintf(stderr, "Failed to create MQTT client, return code: %d\n", rc);
-		free(url);
-		exit(1);
-	}
-
-	sleep(2);
-
-	MQTTClient_connect(client, &conn_opts);
-	if (rc != MQTTCLIENT_SUCCESS)
-	{
-		fprintf(stderr, "Failed to connect MQTT client, return code: %d\n", rc);
-		MQTTClient_destroy(&client);
-		free(url);
-		exit(1);
-	}
-
-	vprint("Connected to MQTT broker at %s\n", url);
-
-	/* COMENTADO: Publicación de secuencia antigua por MQTT
-	   Ahora la secuencia antigua se envía como payload del segundo paquete en do_knocking
-	for (; optind < argc; optind++)
-	{
-		unsigned short proto = PROTO_TCP;
-		const char *port;
-		char *ptr, *arg = strdup(argv[optind]);
-
-		if ((ptr = strchr(arg, ':')))
-		{
-			*ptr = '\0';
-			port = arg;
-			arg = ++ptr;
-
-			proto = PROTO_TCP;
-		}
-		else
-		{
-			port = arg;
-		}
-
-		vprint("Sending old port %s to topic %s\n", port, sailer_topic);
-
-		MQTTClient_publish(client, sailer_topic, strlen(port), port, 2, 0, NULL);
-		MQTTClient_yield();
-	}
-	char *end = "END_SEQUENCE";
-	MQTTClient_publish(client, sailer_topic, strlen(end), end, 2, 0, NULL);
-	MQTTClient_yield();
-	*/
-
-	MQTTClient_disconnect(client, 1000);
-	MQTTClient_destroy(&client);
+	
 	free(url);
 
 	return (0);
@@ -295,151 +232,7 @@ void ver()
 	exit(0);
 }
 
-void *get_new_sequence(char *host, unsigned int port, char *topic)
-{
-	MQTTClient client;
-	FILE *fp;
-	fp = fopen(sequence_file, "w");
-	if (fp == NULL)
-	{
-		fprintf(stderr, "Failed to open %s for writing\n", sequence_file);
-		return NULL;
-	}
 
-	char url[40];
-	int is_ipv6 = strchr(host, ':') != NULL;
-	if (is_ipv6)
-	{
-		vprint("Detected IPv6 address: %s\n", host);
-		snprintf(url, 40, "ssl://[%s]:%d", host, 8883);
-	}
-	else
-	{
-		vprint("Detected IPv4 address: %s\n", host);
-		snprintf(url, 40, "ssl://%s:%d", host, 8883);
-	}
-	// snprintf(url, 40, "ssl://%s:%u", host, 8883);
-	printf("Connecting to MQTT broker at %s\n with topic %s\n", url, topic);
-
-	int rc = MQTTClient_create(&client, url, "sailer", MQTTCLIENT_PERSISTENCE_NONE, NULL);
-	MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
-	MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
-	ssl_opts.trustStore = "ca.crt";	   // Path to your CA certificate
-	ssl_opts.enableServerCertAuth = 0; // Disable server certificate authentication
-	conn_opts.ssl = &ssl_opts;
-
-	if (rc != MQTTCLIENT_SUCCESS)
-	{
-		fprintf(stderr, "Failed to create MQTT client, return code: %d\n", rc);
-		fclose(fp);
-		return NULL;
-	}
-
-	rc = MQTTClient_connect(client, &conn_opts);
-	if (rc != MQTTCLIENT_SUCCESS)
-	{
-		vprint("Failed to connect MQTT client, return code: %d\n", rc);
-		return NULL;
-	}
-
-	rc = MQTTClient_subscribe(client, topic, 2);
-	if (rc != MQTTCLIENT_SUCCESS)
-	{
-		fprintf(stderr, "Failed to subscribe to topic %s, return code: %d\n", topic, rc);
-		MQTTClient_disconnect(client, 1000);
-		MQTTClient_destroy(&client);
-		fclose(fp);
-		return NULL;
-	}
-
-	MQTTClient_message *msg = NULL;
-	unsigned int sizeSequence = 0;
-
-	int topic_len;
-	printf("Waiting for new sequence...\n");
-
-	char *received_topic = NULL;
-	rc = MQTTClient_receive(client, &received_topic, &topic_len, &msg, 5000);
-	if (rc != MQTTCLIENT_SUCCESS || msg == NULL || msg->payload == NULL)
-	{
-		vprint("Failed to receive first message, return code: %d\n", rc);
-		MQTTClient_disconnect(client, 1000);
-		MQTTClient_destroy(&client);
-		return NULL;
-	}
-
-	vprint("Received payload: %s\n", msg->payload);
-
-	sizeSequence = atoi((char *)msg->payload);
-	vprint("Received sequence size: %d\n", sizeSequence);
-	int *sequence = malloc(sizeSequence * sizeof(int));
-	MQTTClient_freeMessage(&msg);
-	if (received_topic)
-	{
-		MQTTClient_free(received_topic);
-		received_topic = NULL;
-	}
-	for (int i = 0; i < sizeSequence; i++)
-	{
-		rc = MQTTClient_receive(client, &received_topic, &topic_len, &msg, 5000);
-		if (rc != MQTTCLIENT_SUCCESS || msg == NULL)
-		{
-			fprintf(stderr, "Failed to receive message, return code: %d\n", rc);
-			MQTTClient_disconnect(client, 1000);
-			MQTTClient_destroy(&client);
-			free(sequence);
-			return NULL;
-		}
-		sequence[i] = atoi((char *)msg->payload);
-		fprintf(fp, "%d\n", sequence[i]);
-
-		vprint("Received port %i: %d\n", i, sequence[i]);
-		MQTTClient_freeMessage(&msg);
-		if (received_topic)
-		{
-			MQTTClient_free(received_topic);
-			received_topic = NULL;
-		}
-	}
-	fprintf(fp, "0\n"); // End of sequence marker
-	rc = MQTTClient_receive(client, &received_topic, &topic_len, &msg, 5000);
-	if (rc != MQTTCLIENT_SUCCESS || msg == NULL || msg->payload == NULL)
-	{
-		fprintf(stderr, "Failed to receive anchor topic, return code: %d\n", rc);
-		free(sequence);
-		MQTTClient_disconnect(client, 1000);
-		MQTTClient_destroy(&client);
-		fclose(fp);
-		return NULL;
-	}
-	fprintf(fp, "%s\n", msg->payload);
-	rc = MQTTClient_receive(client, &received_topic, &topic_len, &msg, 5000);
-	if (rc != MQTTCLIENT_SUCCESS || msg == NULL || msg->payload == NULL)
-	{
-		fprintf(stderr, "Failed to receive sailer topic, return code: %d\n", rc);
-		free(sequence);
-		MQTTClient_disconnect(client, 1000);
-		MQTTClient_destroy(&client);
-		fclose(fp);
-		return NULL;
-	}
-	fprintf(fp, "%s\n", (char *)msg->payload);
-	rc = MQTTClient_receive(client, &received_topic, &topic_len, &msg, 5000);
-	if (rc != MQTTCLIENT_SUCCESS || msg == NULL || msg->payload == NULL)
-	{
-		fprintf(stderr, "Failed to receive MQTT port, return code: %d\n", rc);
-		free(sequence);
-		MQTTClient_disconnect(client, 1000);
-		MQTTClient_destroy(&client);
-		fclose(fp);
-		return NULL;
-	}
-	fprintf(fp, "%d\n", msg->payload);
-	MQTTClient_disconnect(client, 1000);
-	MQTTClient_destroy(&client);
-	fclose(fp);
-	return sequence;
-}
 
 unsigned short *parse_port_sequence(FILE *fp)
 {
@@ -706,6 +499,37 @@ void free_sliced_message(char **slices, int count)
 		}
 	}
 	free(slices);
+}
+
+int replace_first_line(const char *filename, unsigned short newNumber)
+{
+    FILE *in = fopen(filename, "r");
+    if (!in) return -1;
+
+    FILE *out = fopen("temp.txt", "w");
+    if (!out) {
+        fclose(in);
+        return -1;
+    }
+
+    // Escribir la nueva primera línea
+    fprintf(out, "%hu\n", newNumber);
+
+    // Saltar la primera línea original
+    char buffer[512];
+    fgets(buffer, sizeof(buffer), in);
+
+    // Copiar el resto del archivo
+    while (fgets(buffer, sizeof(buffer), in))
+        fputs(buffer, out);
+
+    fclose(in);
+    fclose(out);
+
+    // Reemplazar archivo original
+    rename("temp.txt", filename);
+
+    return 0;
 }
 
 /* vim: set ts=2 sw=2 noet: */
