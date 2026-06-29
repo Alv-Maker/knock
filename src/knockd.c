@@ -2444,6 +2444,7 @@ void generate_sequence_book(int sequence_count, char *filename)
 
 	}
 	fclose(seq_file);
+	chown(filename, atoi(getenv("SUDO_UID")), atoi(getenv("SUDO_GID"))); // Change the owner to the current user and group
 }
 
 
