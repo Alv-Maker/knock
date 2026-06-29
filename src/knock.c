@@ -56,6 +56,7 @@ char *do_knocking(const char *hostname, unsigned short *sequence, char *message,
 char *read_line(FILE *fp);
 char **slice_message(const char *message, int slices);
 void free_sliced_message(char **slices, int count);
+int replace_first_line(const char *filename, unsigned short newNumber);
 
 int o_verbose = 0;
 int o_udp = 0;
@@ -413,12 +414,13 @@ char *do_knocking(const char *hostname, unsigned short *sequence, char *message,
 				fprintf(stderr, "Failed to generate random bytes for payload\n");
 				exit(1);
 			}
-			random_num = random_num % 3 + 1; // Generate random number 0-32
+			random_num = random_num % 32 + 1; // Generate random number 0-32
 			payload_buffer[0] = '\0';		 // Clear the buffer
 			snprintf(payload_buffer, sizeof(payload_buffer), "%u", random_num);
 			payload = payload_buffer;
 			payload_len = strlen(payload);
 			vprint("Generated random payload: %s\n", payload);
+			replace_first_line(sequence_file, (unsigned short)random_num);
 		}
 
 		vprint("hitting udp %s:%hu with message: %s\n", ipname, sequence[i], payload);

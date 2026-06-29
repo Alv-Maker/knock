@@ -2426,7 +2426,7 @@ void generate_sequence_book(int sequence_count, char *filename)
 		perror("RAND_bytes");
 		cleanup(1);
 	}
-	unsigned short random_btw_0_32 = rand_bytes[0] % 3 + 1; // Random number between 0 and 32
+	unsigned short random_btw_0_32 = rand_bytes[0] % 32 + 1; // Random number between 0 and 32
 	
 	fprintf(seq_file, "%hu\n", random_btw_0_32); // Write the random number to the file
 	vprint("Random sequence index for validation: %hu\n", random_btw_0_32);
@@ -2631,7 +2631,7 @@ void generate_initial_new_credentials(int max_users){
 
 		char filename[256];
 		snprintf(filename, sizeof(filename), "seq_book_%d.txt", i);
-		generate_sequence_book(3, filename); // Generate 32 sequences for each user
+		generate_sequence_book(32, filename); // Generate 32 sequences for each user
 		unsigned short* sequence = get_sequence_from_book(filename); // Read the validated sequence from the book
 		
 		// Check if sequence was successfully retrieved
