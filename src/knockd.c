@@ -67,9 +67,10 @@ extern int daemon(int, int);
 
 static char version[] = "0.91";
 
-#define SEQ_TIMEOUT 25 /* default knock timeout in seconds */
-#define CMD_TIMEOUT 10 /* default timeout in seconds between start and stop commands */
-#define SEQ_MAX 32	   /* maximum number of ports in a knock sequence */
+#define SEQ_TIMEOUT 25	 /* default knock timeout in seconds */
+#define CMD_TIMEOUT 10	 /* default timeout in seconds between start and stop commands */
+#define SEQ_MAX 32		 /* maximum number of ports in a knock sequence */
+#define SEQ_BOOK_SIZE 32 /* size of the sequence book measured in entries */
 
 typedef enum _flag_stat
 {
@@ -105,7 +106,7 @@ typedef struct opendoor
 
 /* The credentials that let you access knockd through MQTT */
 
-typedef struct
+/*typedef struct
 {
 	unsigned short sequence[SEQ_MAX];
 	char anchorTopic[80];
@@ -116,7 +117,7 @@ typedef struct
 	char *pcap_filter_exp;
 	char *pcap_filter_expv6;
 
-} credential_t;
+} credential_t;*/
 
 typedef struct
 {
@@ -125,8 +126,8 @@ typedef struct
 	unsigned short sequence[SEQ_MAX];
 	unsigned short *keySequence;
 	unsigned short keySequenceCount;
-	char* pcap_filter_exp;
-	char* pcap_filter_expv6;
+	char *pcap_filter_exp;
+	char *pcap_filter_expv6;
 } credential_new_t;
 
 PMList *doors = NULL;
@@ -139,7 +140,6 @@ short tcp_port_tries = 0;
 typedef struct knocker
 {
 	opendoor_t *door;
-	credential_t *cred_old;
 	credential_new_t *cred;
 	short stage;
 	char src[64];  /* IP address */
@@ -176,7 +176,6 @@ int exec_cmd(char *command, char *name);
 void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet);
 int target_strcmp(char *ip, char *target);
 void secondPhaseManager(knocker_t *sealer);
-credential_t *generate_new_credentials();
 unsigned short *receive_sequence(char *topic, unsigned int port);
 // void register_new_sequence(const unsigned char *command, unsigned short *sequence);
 void generate_new_sequence();
@@ -240,25 +239,6 @@ int main(int argc, char **argv)
 
 	printf("knockd %s\n", version);
 
-	/*credential_t *cred = generate_new_credentials();
-
-	credentials = list_add(credentials, cred);
-
-	FILE *seq_file = fopen("seq.conf", "w");
-	if (seq_file == NULL)
-	{
-		perror("Failed to open seq.conf for writing");
-		exit(1);
-	}
-	for (int i = 0; i < cred->keySequenceCount; i++)
-	{
-		fprintf(seq_file, "%hu\n", cred->keySequence[i]);
-	}
-	fprintf(seq_file, "0\n"); // End of sequence marker
-	fprintf(seq_file, "%s\n", cred->anchorTopic);
-	fprintf(seq_file, "%s\n", cred->sailerTopic);
-	fprintf(seq_file, "%d\n", cred->MQTT_port);
-	fclose(seq_file);*/
 	int flag = 0;
 
 	while ((opt = getopt_long(argc, argv, "4vDdli:c:p:g:hVu:f:", opts, &optidx)))
@@ -325,9 +305,8 @@ int main(int argc, char **argv)
 	}
 
 	if (!flag)
-		//generate_initial_credentials(max_users);
+		// generate_initial_credentials(max_users);
 		generate_initial_new_credentials(max_users);
-
 
 	if (parseconfig(o_cfg))
 	{
@@ -1568,108 +1547,6 @@ int exec_cmd(char *command, char *name)
 	return ret;
 }
 
-/*int open_mqtt_port(knocker_t sealer)
-{
-	int ret;
-	if (sealer.cred->MQTT_port == 0)
-	{
-		vprint("no mqtt port configured, skipping...\n");
-		return 0;
-	}
-	// Open the MQTT port
-	char command[100];
-	snprintf(command, sizeof(command), "iptables -A INPUT -p tcp --dport %d -j ACCEPT", 8883);
-	ret = system(command);
-	snprintf(command, sizeof(command), "iptables -A INPUT -i lo -j ACCEPT");
-	ret = ret | system(command);
-	if (sealer.from_ipv6)
-	{
-		snprintf(command, sizeof(command), "ip6tables -A INPUT -p tcp --dport %d -j ACCEPT", 8883);
-		ret = ret | system(command);
-		snprintf(command, sizeof(command), "ip6tables -A INPUT -i lo -j ACCEPT");
-		ret = ret | system(command);
-		vprint("opened mqtt port for ipv6\n");
-	}
-	if (ret != 0)
-	{
-		vprint("failed to open mqtt port, skipping...\n");
-		return 1;
-	}
-	return 0;
-}
-
-int open_mqtt_port_fwd(knocker_t sealer)
-{
-	int ret;
-	if (sealer.cred->MQTT_port == 0)
-	{
-		vprint("no mqtt port configured for door %s, skipping...\n", sealer.door->name);
-		return 0;
-	}
-	// Open the MQTT port
-	char command[100];
-	snprintf(command, sizeof(command), "iptables -t nat -A PREROUTING -p tcp --dport %d -j REDIRECT --to-port 1883", sealer.cred->MQTT_port);
-	ret = system(command);
-
-	return 0;
-}
-
-int close_mqtt_port(knocker_t sealer)
-{
-	int ret;
-	if (sealer.cred->MQTT_port == 0)
-	{
-		vprint("no mqtt port configured, skipping...\n");
-		return 0;
-	}
-	// Close the MQTT port
-	char command[100];
-	snprintf(command, sizeof(command), "iptables -D INPUT -p tcp --dport %d -j ACCEPT", 8883);
-	ret = system(command);
-	snprintf(command, sizeof(command), "iptables -D INPUT -i lo -j ACCEPT");
-	ret = ret | system(command);
-	if (sealer.from_ipv6)
-	{
-		snprintf(command, sizeof(command), "ip6tables -D INPUT -p tcp --dport %d -j ACCEPT", 8883);
-		ret = ret | system(command);
-		snprintf(command, sizeof(command), "ip6tables -D INPUT -i lo -j ACCEPT");
-		ret = ret | system(command);
-		vprint("closed mqtt port for ipv6\n");
-	}
-	if (ret != 0)
-	{
-		vprint("failed to close mqtt port, skipping...\n");
-		return 1;
-	}
-	return 0;
-}
-
-int close_mqtt_port_fwd(knocker_t sealer)
-{
-	int ret;
-	if (sealer.cred->MQTT_port == 0)
-	{
-		vprint("no mqtt port configured for door %s, skipping...\n", sealer.door->name);
-		return 0;
-	}
-	// Close the MQTT port
-	char command[100];
-	snprintf(command, sizeof(command), "iptables -t nat -D OUTPUT -p tcp --dport %d -j REDIRECT --to-port 1883", sealer.cred->MQTT_port);
-	ret = system(command);
-	snprintf(command, sizeof(command), "iptables -t nat -D PREROUTING -p tcp --dport %d -j REDIRECT --to-port 1883", sealer.cred->MQTT_port);
-	ret = system(command);
-	snprintf(command, sizeof(command), "iptables -t nat -D OUTPUT -p tcp --sport 1883 -j REDIRECT --to-port %d", sealer.cred->MQTT_port);
-	ret = system(command);
-	snprintf(command, sizeof(command), "iptables -t nat -D PREROUTING -p tcp --sport 1883 -j REDIRECT --to-port %d", sealer.cred->MQTT_port);
-	ret = system(command);
-	if (ret != 0)
-	{
-		vprint("failed to close mqtt port for door %s, skipping...\n", sealer.door->name);
-		return 1;
-	}
-	return 0;
-}*/
-
 /*
  * If examining a TCP packet, try to match flags against those in
  * the door config.
@@ -2071,9 +1948,9 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 			{
 				if (attempt->stage == 1)
 				{
-					char* received_sequence_char = strtok(payload, " "); // Use space as delimiter
-					
-					for (int i = 0;strcmp(received_sequence_char, "END_SEQUENCE") != 0; i++)
+					char *received_sequence_char = strtok(payload, " "); // Use space as delimiter
+
+					for (int i = 0; strcmp(received_sequence_char, "END_SEQUENCE") != 0; i++)
 					{
 						vprint("Received sequence char: %s\n", received_sequence_char);
 						attempt->received_sequence[i] = atoi(received_sequence_char);
@@ -2084,7 +1961,6 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 				else if (attempt->stage > 1 && strcmp(payload, "END_MESSAGE") != 0)
 				{
 					strncat(attempt->message, payload, sizeof(attempt->message) - strlen(attempt->message) - 1);
-	
 				}
 
 				process_attempt(attempt);
@@ -2170,7 +2046,6 @@ void sniff(u_char *arg, const struct pcap_pkthdr *hdr, const u_char *packet)
 						vprint("New attempt added to the list");
 					}
 
-					//attempt->cred->MQTT_port = atoi(payload);
 					process_attempt(attempt);
 				}
 			}
@@ -2204,7 +2079,7 @@ int target_strcmp(char *ip, char *target)
 
 /* vim: set ts=2 sw=2 noet:*/
 
-void generate_new_sequence(credential_t *cred)
+void generate_new_sequence(credential_new_t *cred)
 {
 	// We are going to generate a random name between 4 and 16 for the sequence size
 	unsigned char size_buf[1];
@@ -2241,18 +2116,11 @@ void generate_new_sequence(credential_t *cred)
 	vprint("\nSequence size: %d\n", cred->keySequenceCount);
 }
 
-
 void secondPhaseManager(knocker_t *sealer)
 {
 	credential_new_t *new_cred = regenerate_credentials(sealer->cred);
 	vprint("Size of credentials vector: %d\n", list_count(credentials));
 
-	//open_mqtt_port(*sealer);
-	//sleep(1); // Syncing time
-	//send_sequence(new_cred, sealer->cred->anchorTopic, sealer->cred->MQTT_port, sealer->src);
-	//sleep(1); // Syncing time
-
-	//unsigned short *received_sequence = receive_sequence(sealer->cred->sailerTopic, sealer->cred->MQTT_port);
 	if (fork() == 0)
 	{
 		search_and_exec(sealer->received_sequence, sealer->src);
@@ -2261,18 +2129,17 @@ void secondPhaseManager(knocker_t *sealer)
 
 	sleep(1); // Syncing time
 	unvalidate_credentials(sealer->cred);
-	if(list_count(credentials) != 0){
+	if (list_count(credentials) != 0)
+	{
 		vprint("Something went wrong, credentials vector is not empty after unvalidation\n");
 	}
 	credentials = list_add(credentials, new_cred);
-	//dump_credentials("persistent_credentials.bin");
-	
-	
-	//close_mqtt_port(*sealer);
+	dump_credentials("persistent_credentials.bin");
+
 	generate_pcap_filter(); /* update pcap filter */
 }
 
-credential_t *generate_new_credentials()
+/*credential_t *generate_new_credentials()
 {
 	// Generate new credentials
 	credential_t *cred = malloc(sizeof(credential_t));
@@ -2306,7 +2173,7 @@ credential_t *generate_new_credentials()
 	snprintf((char *)cred->sailerTopic, sizeof(cred->sailerTopic), "knockd/%08x", rand_val);
 
 	return cred;
-}
+}*/
 
 void search_and_exec(unsigned short *sequence, char *sailerIP)
 {
@@ -2367,7 +2234,7 @@ void search_and_exec(unsigned short *sequence, char *sailerIP)
 	}
 }
 
-void generate_initial_credentials(int user_count)
+/*void generate_initial_credentials(int user_count)
 {
 	for (int i = 0; i < user_count; i++)
 	{
@@ -2381,17 +2248,17 @@ void generate_initial_credentials(int user_count)
 			perror("Failed to open seq.conf for writing");
 			exit(1);
 		}
-		//for (int i = 0; i < cred->keySequenceCount; i++)
+		// for (int i = 0; i < cred->keySequenceCount; i++)
 		//{
 		//	fprintf(seq_file, "%hu\n", cred->keySequence[i]);
-		//}
+		// }
 		fprintf(seq_file, "0\n"); // End of sequence marker
 		fprintf(seq_file, "%s\n", cred->anchorTopic);
 		fprintf(seq_file, "%s\n", cred->sailerTopic);
 		fprintf(seq_file, "%d\n", cred->MQTT_port);
 		fclose(seq_file);
 	}
-}
+}*/
 
 /*
 	This function will generate a sequence book for a specified number of users.
@@ -2426,8 +2293,8 @@ void generate_sequence_book(int sequence_count, char *filename)
 		perror("RAND_bytes");
 		cleanup(1);
 	}
-	unsigned short random_btw_0_32 = rand_bytes[0] % 32 + 1; // Random number between 0 and 32
-	
+	unsigned short random_btw_0_32 = rand_bytes[0] % SEQ_BOOK_SIZE + 1; // Random number between 0 and SEQ_BOOK_SIZE
+
 	fprintf(seq_file, "%hu\n", random_btw_0_32); // Write the random number to the file
 	vprint("Random sequence index for validation: %hu\n", random_btw_0_32);
 	for (int i = 0; i < sequence_count; i++)
@@ -2441,13 +2308,10 @@ void generate_sequence_book(int sequence_count, char *filename)
 			fprintf(seq_file, "%hu ", randomport);
 		}
 		fprintf(seq_file, "\n");
-
 	}
 	fclose(seq_file);
 	chown(filename, atoi(getenv("SUDO_UID")), atoi(getenv("SUDO_GID"))); // Change the owner to the current user and group
 }
-
-
 
 /*
  * Dump all current credentials to a backup file (binary format)
@@ -2461,28 +2325,22 @@ void dump_credentials(const char *filename)
 		return;
 	}
 
-	// Count credentials
-	int cred_count = 0;
-	PMList *lp;
-	for (lp = credentials; lp; lp = lp->next)
-		cred_count++;
-
 	// Write count
+	int cred_count = list_count(credentials);
 	fwrite(&cred_count, sizeof(int), 1, backup_file);
-
-	// Write each credential
-	for (lp = credentials; lp; lp = lp->next)
-	{
-		credential_t *cred = (credential_t *)lp->data;
-		fwrite(&cred->MQTT_port, sizeof(unsigned short), 1, backup_file);
-		fwrite(cred->anchorTopic, sizeof(char), 80, backup_file);
-		fwrite(cred->sailerTopic, sizeof(char), 80, backup_file);
+	
+	//Write each credential
+	for (PMList *lp = credentials; lp; lp = lp->next){
+		credential_new_t *cred = (credential_new_t *)lp->data;
 		fwrite(&cred->keySequenceCount, sizeof(int), 1, backup_file);
 		fwrite(cred->keySequence, sizeof(unsigned short), cred->keySequenceCount, backup_file);
+		fwrite(cred->sequence_book_filename, sizeof(char), strlen(cred->sequence_book_filename) + 1, backup_file); // +1 for null terminator
+		fwrite(&cred->valid_sequence, sizeof(int), 1, backup_file);
 	}
 
 	fclose(backup_file);
 	vprint("Credentials dumped to %s\n", filename);
+	
 }
 
 /*
@@ -2502,9 +2360,8 @@ void restore_credentials(const char *filename)
 	fread(&cred_count, sizeof(int), 1, backup_file);
 
 	// Read each credential
-	for (int i = 0; i < cred_count; i++)
-	{
-		credential_t *cred = malloc(sizeof(credential_t));
+	for (int i = 0; i < cred_count; i++){
+		credential_new_t *cred = malloc(sizeof(credential_new_t));
 		if (cred == NULL)
 		{
 			perror("malloc");
@@ -2512,11 +2369,7 @@ void restore_credentials(const char *filename)
 			return;
 		}
 
-		fread(&cred->MQTT_port, sizeof(unsigned short), 1, backup_file);
-		fread(cred->anchorTopic, sizeof(char), 80, backup_file);
-		fread(cred->sailerTopic, sizeof(char), 80, backup_file);
 		fread(&cred->keySequenceCount, sizeof(int), 1, backup_file);
-
 		cred->keySequence = malloc(cred->keySequenceCount * sizeof(unsigned short));
 		if (cred->keySequence == NULL)
 		{
@@ -2525,11 +2378,19 @@ void restore_credentials(const char *filename)
 			fclose(backup_file);
 			return;
 		}
-
 		fread(cred->keySequence, sizeof(unsigned short), cred->keySequenceCount, backup_file);
+
+		char filename_buffer[256];
+		fread(filename_buffer, sizeof(char), sizeof(filename_buffer), backup_file);
+		filename_buffer[sizeof(filename_buffer) - 1] = '\0'; // Ensure null-termination
+		cred->sequence_book_filename = strdup(filename_buffer);
+
+		fread(&cred->valid_sequence, sizeof(int), 1, backup_file);
+
 		credentials = list_add(credentials, cred);
 	}
 
+	
 	fclose(backup_file);
 	vprint("Credentials restored from %s\n", filename);
 }
@@ -2590,7 +2451,7 @@ short *get_sequence_from_book(const char *filename)
 	char nextToken, nextNextToken;
 	while (i < 32)
 	{
-		
+
 		if (fscanf(book_file, "%hu", &sequence[i]) == 1)
 			i++;
 		else
@@ -2603,8 +2464,6 @@ short *get_sequence_from_book(const char *filename)
 			break;
 		else
 			ungetc(nextNextToken, book_file);
-
-		
 	}
 
 	// Check if we read at least 4 numbers
@@ -2620,7 +2479,8 @@ short *get_sequence_from_book(const char *filename)
 	return sequence;
 }
 
-void generate_initial_new_credentials(int max_users){
+void generate_initial_new_credentials(int max_users)
+{
 	for (int i = 0; i < max_users; i++)
 	{
 		credential_new_t *cred = malloc(sizeof(credential_new_t));
@@ -2632,9 +2492,9 @@ void generate_initial_new_credentials(int max_users){
 
 		char filename[256];
 		snprintf(filename, sizeof(filename), "seq_book_%d.txt", i);
-		generate_sequence_book(32, filename); // Generate 32 sequences for each user
-		unsigned short* sequence = get_sequence_from_book(filename); // Read the validated sequence from the book
-		
+		generate_sequence_book(SEQ_BOOK_SIZE, filename);			 // Generate SEQ_BOOK_SIZE sequences for each user
+		unsigned short *sequence = get_sequence_from_book(filename); // Read the validated sequence from the book
+
 		// Check if sequence was successfully retrieved
 		if (sequence == NULL)
 		{
@@ -2642,13 +2502,14 @@ void generate_initial_new_credentials(int max_users){
 			free(cred);
 			continue;
 		}
-		
+
 		// Count valid sequence elements
 		int seq_count = 0;
-		for(int j = 0; j < SEQ_MAX && sequence[j] != 0; j++){
+		for (int j = 0; j < SEQ_MAX && sequence[j] != 0; j++)
+		{
 			seq_count++;
 		}
-		
+
 		// Allocate and copy keySequence
 		cred->keySequence = malloc(seq_count * sizeof(unsigned short));
 		if (cred->keySequence == NULL)
@@ -2658,8 +2519,9 @@ void generate_initial_new_credentials(int max_users){
 			free(sequence);
 			return;
 		}
-		
-		for(int j = 0; j < seq_count; j++){
+
+		for (int j = 0; j < seq_count; j++)
+		{
 			cred->keySequence[j] = sequence[j];
 		}
 		cred->keySequenceCount = seq_count;
@@ -2671,46 +2533,50 @@ void generate_initial_new_credentials(int max_users){
 
 int replace_first_line(const char *filename, unsigned short newNumber)
 {
-    FILE *in = fopen(filename, "r");
-    if (!in) return -1;
+	FILE *in = fopen(filename, "r");
+	if (!in)
+		return -1;
 
-    FILE *out = fopen("temp.txt", "w");
-    if (!out) {
-        fclose(in);
-        return -1;
-    }
+	FILE *out = fopen("temp.txt", "w");
+	if (!out)
+	{
+		fclose(in);
+		return -1;
+	}
 
-    // Escribir la nueva primera línea
-    fprintf(out, "%hu\n", newNumber);
+	// Escribir la nueva primera línea
+	fprintf(out, "%hu\n", newNumber);
 
-    // Saltar la primera línea original
-    char buffer[512];
-    fgets(buffer, sizeof(buffer), in);
+	// Saltar la primera línea original
+	char buffer[512];
+	fgets(buffer, sizeof(buffer), in);
 
-    // Copiar el resto del archivo
-    while (fgets(buffer, sizeof(buffer), in))
-        fputs(buffer, out);
+	// Copiar el resto del archivo
+	while (fgets(buffer, sizeof(buffer), in))
+		fputs(buffer, out);
 
-    fclose(in);
-    fclose(out);
+	fclose(in);
+	fclose(out);
 
-    // Reemplazar archivo original
-    rename("temp.txt", filename);
+	// Reemplazar archivo original
+	rename("temp.txt", filename);
 
-    return 0;
+	return 0;
 }
 
 short get_sequence_count(short *sequence)
 {
 	int count = 0;
-	while (count < SEQ_MAX && sequence[count] != 0) {
+	while (count < SEQ_MAX && sequence[count] != 0)
+	{
 		count++;
 	}
 	return count;
 }
-	
-credential_new_t* regenerate_credentials(credential_new_t* old_cred){
-	credential_new_t* new_cred = malloc(sizeof(credential_new_t));
+
+credential_new_t *regenerate_credentials(credential_new_t *old_cred)
+{
+	credential_new_t *new_cred = malloc(sizeof(credential_new_t));
 	new_cred->sequence_book_filename = strdup(old_cred->sequence_book_filename);
 	new_cred->valid_sequence = old_cred->valid_sequence;
 	replace_first_line(new_cred->sequence_book_filename, new_cred->valid_sequence);
@@ -2718,5 +2584,3 @@ credential_new_t* regenerate_credentials(credential_new_t* old_cred){
 	new_cred->keySequenceCount = get_sequence_count(new_cred->keySequence);
 	return new_cred;
 }
-
-

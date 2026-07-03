@@ -46,6 +46,8 @@ static char version[] = "0.9";
 #define IP_V4 AF_INET
 #define IP_V6 AF_INET6
 
+#define SEQ_BOOK_SIZE 32 /* size of the sequence book measured in entries */
+
 /* function prototypes */
 void vprint(char *fmt, ...);
 void ver();
@@ -62,7 +64,7 @@ int o_verbose = 0;
 int o_udp = 0;
 int o_delay = 0;
 int o_ip = IP_DEFAULT;
-char sequence_file[PATH_MAX] = "credential_0.txt"; /* default sequence file */
+char sequence_file[PATH_MAX] = "default";
 
 int main(int argc, char **argv)
 {
@@ -83,6 +85,7 @@ int main(int argc, char **argv)
 			{"ipv4", no_argument, 0, '4'},
 			{"ipv6", no_argument, 0, '6'},
 			{"message", required_argument, 0, 'm'},
+			{"file", required_argument, 0, 'f'},
 			{0, 0, 0, 0}};
 
 	while ((opt = getopt_long(argc, argv, "vud:hV46m:f:", opts, &optidx)))
@@ -126,11 +129,11 @@ int main(int argc, char **argv)
 			usage();
 		}
 	}
-	if ((argc - optind) < 2)
+	if ((argc - optind) < 2 || strcmp(sequence_file, "default") == 0)
 	{
 		usage();
 	}
-
+	
 	if (o_delay < 0)
 	{
 		fprintf(stderr, "error: delay cannot be negative\n");
@@ -161,12 +164,7 @@ int main(int argc, char **argv)
 
 	ipname = do_knocking(hostname, sequence, message, argc, argv, optind);
 
-	// char *seq = get_new_sequence(ipname, mqtt_port, anchor_topic);
-	// if (seq == NULL)
-	//{
-	//	fprintf(stderr, "Failed to get new sequence\n");
-	//	exit(1);
-	// }
+
 
 	
 	char *url = malloc(40);
@@ -205,7 +203,7 @@ void vprint(char *fmt, ...)
 
 void usage()
 {
-	printf("usage: knock [options] <host> <port[:proto]> [port[:proto]] ...\n");
+	printf("usage: knock [options] <host> <port[:proto]> [port[:proto]] -f <sequence_book_file>\n");
 	printf("options:\n");
 	printf("  -u, --udp            make all ports hits use UDP (default is TCP) -- not supported\n");
 	printf("  -d, --delay <t>      wait <t> milliseconds between port hits\n");
@@ -215,9 +213,9 @@ void usage()
 	printf("  -V, --version        display version\n");
 	printf("  -h, --help           this help\n");
 	printf("  -m  message to send in each knock (default is 'hi from udp')\n");
-	printf("  -f,   file to read the sequence and topics from (default is 'credential_0.txt')\n");
+	printf("  -f, --file <file>    Sequence book file to read from\n");
 	printf("\n");
-	printf("example:  knock myserver.example.com 123 456 789\n");
+	printf("example:  knock myserver.example.com 123 456 789 -f seq_book_0.txt\n");
 	printf("\n");
 	exit(1);
 }
@@ -414,7 +412,7 @@ char *do_knocking(const char *hostname, unsigned short *sequence, char *message,
 				fprintf(stderr, "Failed to generate random bytes for payload\n");
 				exit(1);
 			}
-			random_num = random_num % 32 + 1; // Generate random number 0-32
+			random_num = random_num % SEQ_BOOK_SIZE + 1; // Generate random number 0-SEQ_BOOK_SIZE
 			payload_buffer[0] = '\0';		 // Clear the buffer
 			snprintf(payload_buffer, sizeof(payload_buffer), "%u", random_num);
 			payload = payload_buffer;
