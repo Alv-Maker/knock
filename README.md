@@ -7,7 +7,7 @@ Modifications' code: Copyright (c) 2025, Alberto Nóvoa González <angonzalez22@
 - libpcap
 - autoconf tools (for building from source)
 - openssl ssl and crypto libraries
-- mqtt paho c client library (only for versions prior to 0.92)
+- mqtt paho c client library (not required if you are using the main branch, but required if you are using the other branches that use MQTT for dynamic port knocking)
 
 # Installation process:
 1. Clone the repository.
@@ -24,6 +24,8 @@ $ sudo make install (only if you want to install it system-wide, otherwise you c
 - To start the knockd daemon: `sudo knockd -c /path/to/knockd.conf` (parameter c is not required if you are using the default configuration file path)
 - Copy the sequence book to the client machine (default: credential_0.txt) using a secure method (e.g., scp, sftp). This process is done by the administrator because we understand that the processes can vary a lot.
 - To send a knock sequence: `knock -f /path/to/sequence_file.txt` (parameter f is not required if you are using the default sequence file path)
+
+For more detailed information about the usage of knockd, please read the documentation contained in the doc/USER_GUIDE.md file.
 
 # Dynamic port knocking:
 This implementation supports dynamic port knocking, this means that the knocking sequence is not static and change every time a knock sequence is sent. Initially, and up to the version 0.92 this process was done using MQTT server, with topics changing every time too. But in the latests versions the dynamic port knocking is done using a sequence file, reducing the exchange of information between the client and the server, and also reducing the attack surface of the implementation.

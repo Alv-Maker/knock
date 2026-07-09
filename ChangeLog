@@ -1,7 +1,10 @@
 VERSION         DESCRIPTION
 -----------------------------------------------------------------------------
-
-0.9           - Dynamic port knocking with MQTT (Alberto Nóvoa González)
+0.95         - Added persistence feature, allowing the knockd daemon to save its context and restore it after a crash or restart.
+              - Added support for sending custom messages to the client in the sequence file, using variable slices to separate the message between the knocking sequence.
+              - Updated documentation to reflect the new features and changes in usage.
+              - Now MQTT is not required for dynamic port knocking, as it is now implemented using a sequence file with a rotation and sequence number validation system, reducing the exchange of information between the client and the server, and also reducing the attack surface of the implementation.
+0.9           - Dynamic port knocking with MQTT (Alv-Maker)
 0.8           - Multiple fixes (#67, #77)
               - IPv6 support (Sebastien Valat)
 0.7.8         - Fix for Issue #33, #34 and #35 contributed by Alexander

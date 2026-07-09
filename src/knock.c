@@ -37,7 +37,7 @@
 #include <fcntl.h>
 #include <openssl/rand.h>
 
-static char version[] = "0.9";
+static char version[] = "0.95";
 
 #define PROTO_TCP 1
 #define PROTO_UDP 2
