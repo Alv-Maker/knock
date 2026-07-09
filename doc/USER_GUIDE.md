@@ -1,0 +1,16 @@
+## User Guide for the newest version of knockd
+
+# STARTING TO USE KNOCKD:
+
+For normal use, the user must follow the following steps:
+1. Execute the command `sudo knockd -c /path/to/knockd.conf -i <interface> -u <max_user_number>` to start the knockd daemon. The parameter `-c` is optional if you are using the default configuration file path, and the parameter `-i` is optional if you are using the default network interface. The parameter `-u` is optional but strongly recommended to be used, because it will limit the number of users that can send a knock sequence to the server. If this parameter is not used, the default value is 1 user.
+2. In this moment the knockd daemon is running and waiting for a knock sequence to be sent. Additionaly, the knockd daemon will create the sequence books file (following this naming convention: `seq_book_<userid>.txt`) in the same directory where the knockd daemon is running. This file will contain the knocking sequence and the message to be sent to the client, if any. The user must copy this file to the client machine using a secure method (e.g., scp, sftp). This process is done by the administrator because we understand that the processes can vary a lot.
+3. Copied this file to the client machine, the user must execute the command `knock -f /path/to/seq_book_file.txt` to send the knock sequence to the server. The parameter `-f` is optional but strongly recommended to be used.
+4. If the knock sequence is correct, the associated action will be executed. If the knock sequence is incorrect, the server will ignore it and no action will be executed.
+5. The user can send a new knock sequence to the server, but the server will only accept a new knock sequence if the previous one has been completed. If the previous knock sequence has not been completed, the server will ignore the new knock sequence and no action will be executed.
+
+# HOW TO USE THE PERSISTENCE FEATURE:
+
+1. When a port knocking is completed, the server will create or update a file named `persistence_credentials.bin` in the same directory where the knockd daemon is running. This file will contain the context of the daemon, saved just after the knock sequence has been completed. This file will be used to restore the context of the daemon in case of a crash or a restart.
+2. If the knockd daemon stop, and you want to restore the context of the daemon, avoiding get new sequence books from the server, you must execute the command `sudo knockd -c /path/to/knockd.conf -i <interface> -u <max_user_number> -f /path/to/persistence_credentials.bin` to start the knockd daemon. The parameter `-f` is neccesary when you are recovering the context of the application.
+3. After this command is executed, no more actions are needed, the knockd daemon will be running and waiting for a knock sequence to be sent. The state is just the same as it was before the crash or restart, and the users can send knock sequences to the server without any problem.
